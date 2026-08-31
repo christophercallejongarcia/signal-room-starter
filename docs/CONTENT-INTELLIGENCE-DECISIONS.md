@@ -43,7 +43,7 @@ Zum Zeitpunkt der Prüfung enthielt Convex:
 - 20 Transkriptversuche mit Status `silent`
 - 1.222 Signals ohne Transkriptstatus
 
-Der Befund deutet auf eine nicht unterstützte Antwortform des aktuellen Transkript-Actors hin. Die als `silent` gespeicherten Ergebnisse gelten im vorhandenen Code fälschlich als endgültig und werden nicht erneut versucht. Vor weiteren kostenpflichtigen Läufen muss ein aktuelles Actor-Ergebnis geprüft und der Parser angepasst werden.
+Der Befund deutete auf eine nicht unterstützte Antwortform des aktuellen Transkript-Actors hin. Die als `silent` gespeicherten Ergebnisse gelten im vorhandenen Code fälschlich als endgültig und werden nicht erneut versucht. Ein Prüf-Lauf am 2026-08-31 bestätigte die aktuelle Antwortform: `code` und `url` tragen den Shortcode, `text` den Volltext und `segments[]` die Zeitmarken mit `start`, `end` und `text`. Der Parser bevorzugt diese Felder. Die bisherige tolerante Suche bleibt als Rückfall bestehen. Die einmalige Bereinigung bereits falsch gespeicherter Status bleibt Aufgabe des folgenden Tickets.
 
 Betroffene Grundlagen:
 
