@@ -6,7 +6,15 @@
 
 **Status:** ready-for-agent
 
-- [ ] Batch-Auswahl liest den Score des Outlier-Scorers; Reels ohne Creator oder ohne URL bleiben außen vor
-- [ ] `TRANSCRIPT_SCORE_THRESHOLD` in der Konfiguration, per Umgebung überschreibbar, in `.env.example` dokumentiert; wirkt auch in der Convex-Umgebung
-- [ ] Tests: Schwelle über den Score, Sortierung, Limit (Vorbild `tests/transcripts.test.mjs`)
-- [ ] CONTEXT.md: "Transkript" beschreibt die Auswahl über den Score
+- [x] Batch-Auswahl liest den Score des Outlier-Scorers; Reels ohne Creator oder ohne URL bleiben außen vor
+- [x] `TRANSCRIPT_SCORE_THRESHOLD` in der Konfiguration, per Umgebung überschreibbar, in `.env.example` dokumentiert; wirkt auch in der Convex-Umgebung
+- [x] Tests: Schwelle über den Score, Sortierung, Limit (Vorbild `tests/transcripts.test.mjs`)
+- [x] CONTEXT.md: "Transkript" beschreibt die Auswahl über den Score
+
+## Comments
+
+### 2026-08-31
+
+- `pickTranscriptBatch` nutzt den unveränderten `outlierScorer` für Outlier, Channel-Relative und Velocity, sortiert nach dem kombinierten Score und gibt nur geeignete Original-Signale an den Actor weiter.
+- `TRANSCRIPT_SCORE_THRESHOLD` steht standardmäßig auf `20` und kann lokal sowie in Convex über dieselbe Umgebungsvariable gesetzt werden.
+- `npm run check` ist grün: TypeScript, 331 Tests und Produktions-Build.
