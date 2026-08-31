@@ -4,7 +4,7 @@
 **Stand:** 2026-08-31
 **Quellen:** `docs/CONTENT-INTELLIGENCE-DECISIONS.md` (Abschnitte 2.2, 3, 5, 6, 13, Phase 3 in 14), `docs/CONTENT-INTELLIGENCE-GRILLING-PROTOKOLL.md` (Q36, Q37, Q44, Q50 bis Q53, Q60)
 **Vorgänger:** Tickets 08 (Ideas: Capture und Develop) und 22 (Produktionsstufen) in `.scratch/signal-room-instagram/issues/`
-**Blockiert durch:** `.scratch/transkripte/spec.md`, mindestens bis Transkripte mit Status `ready` im Korpus liegen. Die Arbeitsfassung ist willkommen, aber nicht Voraussetzung.
+**Blockiert durch:** `.scratch/phase-2-transkripte/spec.md`, mindestens bis Transkripte mit Status `ready` im Korpus liegen. Die Arbeitsfassung ist willkommen, aber nicht Voraussetzung.
 
 ## Problem Statement
 

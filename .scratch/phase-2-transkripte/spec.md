@@ -4,7 +4,7 @@
 **Stand:** 2026-08-31
 **Quellen:** `docs/CONTENT-INTELLIGENCE-DECISIONS.md` (Abschnitte 2.1, 4, 13, Phase 2 in 14), `docs/CONTENT-INTELLIGENCE-GRILLING-PROTOKOLL.md` (Q35, Q40, Q42)
 **Vorgänger:** Ticket 20 in `.scratch/signal-room-instagram/issues/` (Transkripte im Korpus, umgesetzt, aber live nie erfolgreich)
-**Blockiert:** `.scratch/skriptstudio/spec.md` (das Skriptstudio liest das Volltranskript)
+**Blockiert:** `.scratch/phase-3-skriptstudio/spec.md` (das Skriptstudio liest das Volltranskript)
 
 ## Problem Statement
 
