@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Handgriff für Chris:** den Prüf-Lauf starten (Apify-Token, ein bis zwei bekannte Reels mit Sprache, wenige Cent). Das Ticket enthält dafür ein kleines Skript oder einen `npx convex run`-Aufruf mit `transcriptLimit: 2` und `creatorLimit: 0`; das rohe Dataset-Item landet als Datei unter den Test-Fixtures.
 

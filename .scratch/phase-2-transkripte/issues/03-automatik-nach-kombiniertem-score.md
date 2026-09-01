@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Statusmodell (die Auswahl muss `pending` und `failed` kennen)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Batch-Auswahl liest den Score des Outlier-Scorers; Reels ohne Creator oder ohne URL bleiben außen vor
 - [x] `TRANSCRIPT_SCORE_THRESHOLD` in der Konfiguration, per Umgebung überschreibbar, in `.env.example` dokumentiert; wirkt auch in der Convex-Umgebung

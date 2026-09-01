@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Actor-Antwort prüfen (die Bereinigung darf erst laufen, wenn der Parser die Reels nicht sofort wieder falsch markiert)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] `transcriptStatus` kennt `pending` und `failed`; Signal trägt Versuche, Zeitpunkt, Fehlermeldung, Segmente; Convex-Schema und Datei-Store passen
 - [x] `TranscriptCount` am Run zählt `failed`

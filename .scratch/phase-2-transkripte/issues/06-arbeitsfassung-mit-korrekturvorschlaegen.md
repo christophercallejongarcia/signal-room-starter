@@ -4,16 +4,20 @@
 
 **Blocked by:** 04 — Reel-Ansicht
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Signal trägt `transcriptWorkingCopy` und `transcriptCorrections` (id, original, replacement, reason, source, status, Zeitpunkt); Schema und Datei-Store passen
-- [ ] Arbeitsfassung ist eine reine Funktion aus Original plus akzeptierten Korrekturen und wird bei jeder Statusänderung neu gespeichert; ohne akzeptierte Korrektur gibt es keine
-- [ ] Bridge-Endpunkt `/v1/transcript-corrections` gegen festes Schema; Prompt beschränkt auf Erkennungsfehler, verbietet Umformulierung; Vorschlag ohne wörtliche Fundstelle fällt weg, Längen begrenzt, Liste gedeckelt
-- [ ] `PATCH /api/signals/transcript` mit geparstem Body für Akzeptieren, Bearbeiten, Ablehnen (Vorbild Signal-Markierung)
-- [ ] Ein `original`, das mehrfach vorkommt, wird überall ersetzt; der Vorschlag nennt die Anzahl
-- [ ] Neuer Actor-Lauf löscht Arbeitsfassung und Korrekturen
-- [ ] `hookOf` bevorzugt die Arbeitsfassung
-- [ ] UI: Umschalter Original/Arbeitsfassung, Markierungen im Text, Korrekturliste mit drei Aktionen, Lade- und Fehlerzustand des Bridge-Laufs
-- [ ] Demo-Fixture: ein Reel mit zwei akzeptierten Korrekturen und einem offenen Vorschlag
-- [ ] Tests: Korrektur-Funktionen (Vorbild `tests/ideas.test.mjs`), Bridge-Vertrag (Vorbild `tests/bridge-hooks.test.mjs`), Hook-Quelle liest die Arbeitsfassung
-- [ ] CONTEXT.md: Begriffe "Arbeitsfassung" und "Korrektur"; "Hook-Quelle" ergänzt
+- [x] Signal trägt `transcriptWorkingCopy` und `transcriptCorrections` (id, original, replacement, reason, source, status, Zeitpunkt); Schema und Datei-Store passen
+- [x] Arbeitsfassung ist eine reine Funktion aus Original plus akzeptierten Korrekturen und wird bei jeder Statusänderung neu gespeichert; ohne akzeptierte Korrektur gibt es keine
+- [x] Bridge-Endpunkt `/v1/transcript-corrections` gegen festes Schema; Prompt beschränkt auf Erkennungsfehler, verbietet Umformulierung; Vorschlag ohne wörtliche Fundstelle fällt weg, Längen begrenzt, Liste gedeckelt
+- [x] `PATCH /api/signals/transcript` mit geparstem Body für Akzeptieren, Bearbeiten, Ablehnen (Vorbild Signal-Markierung)
+- [x] Ein `original`, das mehrfach vorkommt, wird überall ersetzt; der Vorschlag nennt die Anzahl
+- [x] Neuer Actor-Lauf löscht Arbeitsfassung und Korrekturen
+- [x] `hookOf` bevorzugt die Arbeitsfassung
+- [x] UI: Umschalter Original/Arbeitsfassung, Markierungen im Text, Korrekturliste mit drei Aktionen, Lade- und Fehlerzustand des Bridge-Laufs
+- [x] Demo-Fixture: ein Reel mit zwei akzeptierten Korrekturen und einem offenen Vorschlag
+- [x] Tests: Korrektur-Funktionen (Vorbild `tests/ideas.test.mjs`), Bridge-Vertrag (Vorbild `tests/bridge-hooks.test.mjs`), Hook-Quelle liest die Arbeitsfassung
+- [x] CONTEXT.md: Begriffe "Arbeitsfassung" und "Korrektur"; "Hook-Quelle" ergänzt
+
+## Comments
+
+2026-09-01: Implementiert in Verträgen, Datei- und Convex-Store, Bridge, Transcript-API, Reel-Ansicht, Hook-Quelle und Demo-Fixture. Korrekturen werden wörtlich validiert, bei mehrfachen Fundstellen überall ersetzt und bei einem neuen Actor-Lauf gelöscht. Tests für Pure Functions, Bridge-Vertrag, Hook-Quelle und Transkriptanzeige ergänzt. `npm run check` folgt als Abschlussprüfung.
