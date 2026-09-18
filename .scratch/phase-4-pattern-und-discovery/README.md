@@ -1,6 +1,6 @@
 # Phase 4: Pattern-Bibliothek und Creator-Discovery
 
-Stand: 2026-09-10. Spezifiziert, Implementierung offen. 9 Tickets mit Status `ready-for-agent`.
+Stand: 2026-09-18. P4-01 und P4-02 lokal abgenommen. P4-03 folgt im freigegebenen Umfang. P4-04 bis P4-09 bleiben offen und werden hier nicht begonnen.
 
 Aus vollständigen Transkripten werden belegte und menschlich bestätigte Pattern. Neue Creator landen zunächst in einer prüfbaren Kandidatenliste.
 
