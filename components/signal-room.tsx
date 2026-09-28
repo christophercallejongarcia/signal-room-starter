@@ -39,7 +39,7 @@ import { ReelDetailPanel, TranscriptStatusBadge } from "@/components/reel-detail
 import { DiscoverFeed } from "@/components/discover-feed";
 import { YoutubeRadar } from "@/components/youtube-radar";
 import { TAB_PARAM, creatorPath, creatorStats } from "@/lib/creator-detail";
-import { DEFAULT_NETWORK, NETWORK_STORAGE_KEY, deskSearch, ideasForNetwork, parseNetwork, resolveNetwork, type DeskNetwork } from "@/lib/network-view";
+import { DEFAULT_NETWORK, NETWORK_STORAGE_KEY, deskSearch, ideasForNetwork, networkAfterCapture, parseNetwork, resolveNetwork, type DeskNetwork } from "@/lib/network-view";
 import { rankCorpus, DEMO_NOW, type Ranked } from "@/lib/rank-corpus";
 import { demoCreators, demoHashtagPosts, demoScriptIdeaTitles, demoScripts, demoSignals } from "@/lib/demo-data";
 import { DEMO_SCORING_NOTE } from "@/lib/demo-score";
@@ -797,6 +797,8 @@ export function SignalRoom() {
       }
       const { idea } = (await response.json()) as { idea: Idea };
       setIdeas((current) => ({ ...current, items: [idea, ...current.items], phase: "ready" }));
+      // The new Idea has to be visible in Ideas: follow its source's network.
+      setNetworkState(networkAfterCapture(idea, network, signalNetworks));
       setActiveTab("ideas");
     } catch (error) {
       setIdeas((current) => ({ ...current, error: error instanceof Error ? error.message : "The capture failed." }));

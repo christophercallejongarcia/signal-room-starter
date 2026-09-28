@@ -66,3 +66,17 @@ export function ideasForNetwork<T extends Pick<Idea, "sourceSignalId" | "sourceU
     return origin === null || origin === network;
   });
 }
+
+/**
+ * The network the Ideas tab shows after a capture. A captured Idea must be
+ * visible where it lands: one from an Instagram source captured while YouTube is
+ * selected (Briefing still shows Instagram) switches the view to Instagram.
+ */
+export function networkAfterCapture(
+  idea: Pick<Idea, "sourceSignalId" | "sourceUrl">,
+  current: DeskNetwork,
+  signalNetworks: Map<string, Network>,
+): DeskNetwork {
+  return ideaNetwork(idea, signalNetworks) ?? current;
+}
+

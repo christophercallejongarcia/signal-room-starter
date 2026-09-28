@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultThreshold, deskSearch, ideasForNetwork, resolveNetwork } from "../lib/network-view.ts";
+import { defaultThreshold, deskSearch, ideasForNetwork, networkAfterCapture, resolveNetwork } from "../lib/network-view.ts";
 import { parseThreshold, tabPath } from "../lib/creator-detail.ts";
 
 test("the URL wins over the remembered choice, which wins over Instagram", () => {
@@ -37,4 +37,14 @@ test("Ideas follow their source Signal, else their source link; Ideas without a 
   ];
   assert.deepEqual(ideasForNetwork(ideas, "youtube", signals).map((idea) => idea.id), ["b", "c", "e", "f"]);
   assert.deepEqual(ideasForNetwork(ideas, "instagram", signals).map((idea) => idea.id), ["a", "d", "e"]);
+});
+
+test("an Idea captured from the Instagram Briefing while YouTube is selected stays visible in Ideas", () => {
+  const signals = new Map([["ig-direkt", "instagram"]]);
+  const briefingIdea = { id: "new", sourceSignalId: "ig-direkt", sourceUrl: "https://www.instagram.com/reel/x/" };
+  const target = networkAfterCapture(briefingIdea, "youtube", signals);
+  assert.equal(target, "instagram");
+  assert.deepEqual(ideasForNetwork([briefingIdea], target, signals).map((idea) => idea.id), ["new"]);
+  assert.equal(networkAfterCapture({ id: "form" }, "youtube", signals), "youtube", "an Idea without a source keeps the view");
+  assert.equal(networkAfterCapture({ id: "radar", sourceUrl: "https://youtu.be/x" }, "youtube", signals), "youtube");
 });
