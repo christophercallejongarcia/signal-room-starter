@@ -1621,3 +1621,9 @@ main {
   .yt-radar .signal-grid { grid-template-columns: minmax(0, 1fr); }
 }
 .yt-refresh-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+
+/* ---------- Network toggle bar ---------- */
+
+.network-bar { margin-bottom: 28px; }
+.network-hint { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 11.5px; }
+.network-hint svg { color: var(--coral); flex: none; }

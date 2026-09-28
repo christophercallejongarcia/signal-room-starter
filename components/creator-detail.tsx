@@ -19,7 +19,8 @@ import {
   type CreatorSortState,
 } from "@/lib/creator-detail";
 import { demoCreators, demoSignals } from "@/lib/demo-data";
-import { DEFAULT_OUTLIER_THRESHOLD, isOutlier, isOwned, storeOrDemo, type OutlierThreshold } from "@/lib/discover-filter";
+import { isOutlier, isOwned, storeOrDemo, type OutlierThreshold } from "@/lib/discover-filter";
+import { defaultThreshold } from "@/lib/network-view";
 import { rankCorpus } from "@/lib/rank-corpus";
 
 type Phase = "loading" | "ready" | "error";
@@ -31,7 +32,7 @@ const DEFAULT_ORIGIN = "channels";
 /** How each sortable column reads in the header, and which side it sits on. */
 const COLUMNS: Record<CreatorSort, { label: string; right: boolean; hideSm: boolean }> = {
   published: { label: "Published", right: false, hideSm: true },
-  plays: { label: "Plays", right: true, hideSm: false },
+  plays: { label: "Reach", right: true, hideSm: false },
   outlier: { label: "Outlier", right: true, hideSm: false },
 };
 
@@ -45,7 +46,8 @@ export function CreatorDetail({ creatorId }: { creatorId: string }) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [order, setOrder] = useState<CreatorSortState>(DEFAULT_SORT);
   const [origin, setOrigin] = useState(DEFAULT_ORIGIN);
-  const [threshold, setThreshold] = useState<OutlierThreshold>(DEFAULT_OUTLIER_THRESHOLD);
+  /** The desk's Schwelle when the link carried one; otherwise the creator's network decides (2x Instagram, 3x YouTube). */
+  const [linkedThreshold, setLinkedThreshold] = useState<OutlierThreshold | null>(null);
   const [selectedReel, setSelectedReel] = useState<ReturnType<typeof rankCorpus>[number] | null>(null);
 
   // The link that opened this page carries where it came from and what the desk was
@@ -54,7 +56,7 @@ export function CreatorDetail({ creatorId }: { creatorId: string }) {
     const search = window.location.search;
     const from = new URLSearchParams(search).get(FROM_PARAM);
     if (from && from in ORIGINS) setOrigin(from);
-    setThreshold(parseThreshold(search, DEFAULT_OUTLIER_THRESHOLD));
+    setLinkedThreshold(parseThreshold(search, null));
   }, []);
 
   useEffect(() => {
@@ -81,12 +83,15 @@ export function CreatorDetail({ creatorId }: { creatorId: string }) {
   }, []);
 
   const creator = creators.find((item) => item.id === creatorId);
+  const youtube = creator?.network === "youtube";
+  const threshold = linkedThreshold ?? defaultThreshold(creator?.network);
   const ranked = useMemo(() => rankCorpus(signals, creators, live), [creators, signals, live]);
   const mine = useMemo(() => creatorSignals(ranked, creatorId), [ranked, creatorId]);
   const stats = creatorStats(mine);
   const rows = sortCreatorSignals(mine, order);
   const nowMs = Date.now();
-  const back = { href: tabPath(origin), label: `Back to ${ORIGINS[origin]}` };
+  // Back lands on the creator's own network, so a YouTube channel returns to the YouTube view.
+  const back = { href: tabPath(origin, creator?.network === "youtube" || creator?.network === "instagram" ? creator.network : undefined), label: `Back to ${ORIGINS[origin]}` };
 
   function updateSignal(updated: SignalRecord) {
     setSignals((current) => current.map((signal) => (signal.id === updated.id ? { ...signal, ...updated } : signal)));
@@ -134,11 +139,11 @@ export function CreatorDetail({ creatorId }: { creatorId: string }) {
                 </span>
                 <div>
                   <p className="hero-kicker">
-                    {networkName(creator.network)} / {creator.audience ? `${formatNumber(creator.audience)} followers` : "audience pending"}
+                    {networkName(creator.network)} / {creator.audience ? `${formatNumber(creator.audience)} ${youtube ? "subscribers" : "followers"}` : "audience pending"}
                   </p>
                   <h1>{creator.name}</h1>
                   <p className="hero-sub">
-                    {creator.handle} · every retained upload of this creator, read with the same follower-relative outlier as the feed.
+                    {creator.handle} · every retained upload of this creator, read with the same {youtube ? "channel-median" : "follower-relative"} outlier as the feed.
                     {creator.lastCheckedAt ? ` Last checked ${timeAgo(creator.lastCheckedAt, nowMs)}.` : ""}
                   </p>
                   <p className="creator-marks">
@@ -163,7 +168,9 @@ export function CreatorDetail({ creatorId }: { creatorId: string }) {
             <div className="section-head">
               <div><p className="kicker">Retained corpus</p><h2>Every retained upload</h2></div>
               <p className="note">
-                Sort by date, plays or outlier. An outlier at or above {threshold}x the follower count reads in lime.
+                {youtube
+                  ? `Sort by date, views or outlier. A long-form video at or above ${threshold}x the median of the channel's last 30 long-form videos reads in lime; Shorts score 0.`
+                  : `Sort by date, plays or outlier. An outlier at or above ${threshold}x the follower count reads in lime.`}
               </p>
             </div>
 
@@ -181,7 +188,7 @@ export function CreatorDetail({ creatorId }: { creatorId: string }) {
                         aria-sort={active ? (order.direction === "asc" ? "ascending" : "descending") : "none"}
                       >
                         <button type="button" className={active ? "sort-head active" : "sort-head"} onClick={() => sortBy(sort)}>
-                          {column.label}
+                          {sort === "plays" ? (youtube ? "Views" : "Plays") : column.label}
                           <ArrowUp size={10} weight="bold" className={active && order.direction === "desc" ? "flip" : undefined} />
                         </button>
                       </th>
