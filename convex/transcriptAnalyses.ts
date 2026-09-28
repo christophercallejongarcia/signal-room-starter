@@ -22,8 +22,12 @@ function requireWorker(workerToken: string) {
 }
 
 /** Shared write boundary for automatic, manual and catch-up transcript paths. */
-export async function enqueueForSignal(ctx: MutationCtx, signal: Parameters<typeof createTranscriptAnalysis>[0], now: string) {
-  const analysis = createTranscriptAnalysis(signal, now);
+/** A stored Signal row: the schema keeps `format` a free string, the contract names the known formats. */
+type StoredSignal = Omit<Parameters<typeof createTranscriptAnalysis>[0], "format"> & { format?: string };
+
+export async function enqueueForSignal(ctx: MutationCtx, signal: StoredSignal, now: string) {
+  // createTranscriptAnalysis only queues format "reel"; any other stored string is skipped there.
+  const analysis = createTranscriptAnalysis(signal as Parameters<typeof createTranscriptAnalysis>[0], now);
   if (!analysis) return null;
   const existing = await findAnalysis(ctx, analysis.id);
   if (existing) return publicRow(existing);

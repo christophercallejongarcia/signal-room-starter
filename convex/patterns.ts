@@ -1,7 +1,7 @@
 import { env, internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { ConvexError, v } from "convex/values";
 import { patternEvidenceFields, patternFields, patternRunFields } from "./schema";
-import type { SavePatternComparison } from "../lib/contracts";
+import type { SavePatternComparison, SignalRecord } from "../lib/contracts";
 import { validateCurrentPatternEvidence } from "../lib/pattern-comparison-validation";
 
 const publicRow = <T extends { _id: unknown; _creationTime: number }>(row: T) => {
@@ -39,7 +39,8 @@ async function saveComparison(ctx: MutationCtx, args: SavePatternComparison) {
       ]);
       validateCurrentPatternEvidence(
         [item],
-        signal ? [publicRow(signal)] : [],
+        // The schema keeps `format` a free string; the validator only reads the transcript fields.
+        signal ? [publicRow(signal) as SignalRecord] : [],
         analysis ? [publicRow(analysis)] : [],
       );
     }
