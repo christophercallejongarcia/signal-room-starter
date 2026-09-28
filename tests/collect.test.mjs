@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { collectAndStore, runBackfill, runRefresh } from "../lib/collect.ts";
+import { collectAndStore, logFailedBackfill, runBackfill, runRefresh } from "../lib/collect.ts";
+import { YoutubeQuotaError } from "../lib/adapters/sources/youtube-data-api.ts";
 
 const creator = { id: "instagram-a", name: "A", handle: "@a", network: "instagram", audience: 1000, accent: "#fff", lastCheckedAt: "2026-08-20T00:00:00.000Z" };
 const record = { id: "ig-a", externalId: "a", creatorId: creator.id, title: "t", publishedAt: "2026-08-21T00:00:00.000Z", views: 1, likes: 1, comments: 0, durationSeconds: 1, thumbnailSeed: "a", topic: "x" };
@@ -167,4 +168,82 @@ test("creator limit above the list size leaves the run ok and skips nobody", asy
   const result = await runRefresh({ storage, collect: yields([]), cacheCovers: noCovers, now: () => NOW, creatorLimit: 50 });
   assert.equal(result.creatorsSkipped, 0);
   assert.equal(storage.runs[0].status, "ok");
+});
+
+/** A YouTube client stand-in: its ledger is what the run must log. */
+function fakeClient() {
+  const calls = { search: 0, videos: 0, channels: 0, playlistItems: 0 };
+  return { calls, get: async () => ({}), quota: () => ({ units: calls.videos + calls.channels + calls.playlistItems, calls: { ...calls } }) };
+}
+
+test("runRefresh routes YouTube channels to their connector and logs the run's quota; without a key they are left out", async () => {
+  const yt = { id: "youtube-UCabcdefghijklmnopqrstuv", name: "Y", handle: "@y", network: "youtube", audience: 1, accent: "#fff" };
+  const youtubeRecord = { ...record, id: "yt-v1", externalId: "v1", creatorId: yt.id, format: "long" };
+  const saved = [];
+  const client = fakeClient();
+  const collect = async (c, context) => {
+    if (c.network !== "youtube") return { records: [record], usage };
+    assert.equal(context.youtube, client, "every YouTube creator gets the run's client");
+    Object.assign(client.calls, { channels: client.calls.channels + 1, playlistItems: client.calls.playlistItems + 1, videos: client.calls.videos + 1 });
+    return { records: [youtubeRecord], usage: { unreported: 0, computeUnits: 0, costUsd: 0 }, creatorPatch: { audience: 7_000 }, youtubeVideos: [{ id: "yt-v1" }] };
+  };
+
+  const storage = fakeStorage();
+  storage.creators.push(yt);
+  storage.saveYoutubeVideos = async (videos) => { saved.push(...videos); return { inserted: videos.length, updated: 0 }; };
+  await runRefresh({ storage, collect, youtubeClient: () => client, cacheCovers: noCovers, now: () => NOW, youtubeEnabled: true, transcriptLimit: 0 });
+  const run = storage.runs[0];
+  assert.equal(run.creatorsChecked, 2);
+  assert.deepEqual(run.youtubeQuota, { units: 3, calls: { search: 0, videos: 1, channels: 1, playlistItems: 1 } });
+  assert.equal(run.usage.costUsd, 0.08, "YouTube adds no dollars to the Apify figure");
+  assert.equal(storage.creators.find((c) => c.id === yt.id).audience, 7_000, "fresh subscriber count lands on the creator");
+  assert.deepEqual(saved, [{ id: "yt-v1" }]);
+
+  const keyless = fakeStorage();
+  keyless.creators.push(yt);
+  const seen = [];
+  await runRefresh({ storage: keyless, collect: async (c) => { seen.push(c.network); return { records: [], usage }; }, cacheCovers: noCovers, now: () => NOW, youtubeEnabled: false, transcriptLimit: 0 });
+  assert.deepEqual(seen, ["instagram"]);
+  assert.equal(keyless.runs[0].status, "ok", "a missing key is no creator failure");
+  assert.equal(keyless.runs[0].youtubeQuota, undefined);
+});
+
+test("quotaExceeded stops the YouTube refresh; failed calls stay in the run's quota and the rest keep their cursor", async () => {
+  const channels = ["a", "b", "c"].map((x) => ({ id: `youtube-UC${x}`, name: x, handle: `@${x}`, network: "youtube", audience: 1, accent: "#fff", lastCheckedAt: "2026-08-20T00:00:00.000Z" }));
+  const storage = fakeStorage();
+  storage.creators.splice(0, 1, ...channels);
+  const client = fakeClient();
+  const attempts = [];
+  const collect = async (c) => {
+    attempts.push(c.id);
+    client.calls.channels += 1;
+    throw new YoutubeQuotaError("YouTube channels answered 403 (quotaExceeded)");
+  };
+  const result = await runRefresh({ storage, collect, youtubeClient: () => client, cacheCovers: noCovers, now: () => NOW, youtubeEnabled: true, transcriptLimit: 0 });
+  assert.equal(attempts.length, 1, "no further channel is called after quotaExceeded");
+  assert.equal(result.creatorsChecked, 1);
+  assert.equal(result.creatorsSkipped, 2);
+  const run = storage.runs[0];
+  assert.equal(run.status, "failed");
+  assert.deepEqual(run.youtubeQuota.calls.channels, 1, "the failed call is logged");
+  assert.ok(channels.slice(1).every((c) => storage.creators.find((x) => x.id === c.id).lastCheckedAt === "2026-08-20T00:00:00.000Z"));
+});
+
+test("a YouTube backfill logs every call of its client, on success and on failure", async () => {
+  const yt = { id: "youtube-UCx", name: "X", handle: "@x", network: "youtube", audience: 1, accent: "#fff" };
+  const client = fakeClient();
+  client.calls.channels = 1; // resolving the channel before the backfill
+  const storage = fakeStorage();
+  const collect = async () => { client.calls.channels += 1; client.calls.playlistItems += 1; client.calls.videos += 1; return { records: [], usage: { unreported: 0, computeUnits: 0, costUsd: 0 } }; };
+  await runBackfill(yt, { storage, collect, cacheCovers: noCovers, now: () => NOW }, { youtube: client });
+  assert.equal(storage.runs[0].youtubeQuota.units, 4, "resolve plus the three backfill calls");
+
+  const failing = fakeClient();
+  await assert.rejects(runBackfill(yt, { storage, collect: async () => { failing.calls.channels += 1; throw new Error("channels answered 500"); }, youtubeClient: () => failing, cacheCovers: noCovers, now: () => NOW }), /500/);
+  assert.equal(storage.runs[1].status, "failed");
+  assert.equal(storage.runs[1].youtubeQuota.calls.channels, 1);
+
+  await logFailedBackfill(storage, yt, new Error("channel not found"), failing, NOW);
+  assert.equal(storage.runs[2].status, "failed");
+  assert.equal(storage.runs[2].youtubeQuota.calls.channels, 1);
 });

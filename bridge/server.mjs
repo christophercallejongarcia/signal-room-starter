@@ -4,6 +4,12 @@ import { codexAuthState } from "./auth.mjs";
 import { renderCoverWithCodex } from "./image.mjs";
 import { COVER_FORMATS } from "../lib/cover-formats.mjs";
 import {
+  buildTranscriptAnalysisPrompt,
+  transcriptAnalysisOutputSchema,
+  validateTranscriptAnalysisRequest,
+} from "./transcript-analysis.mjs";
+import { buildPatternDiscoveryPrompt, patternEvaluationOutputSchema, patternHypothesisOutputSchema, validatePatternDiscoveryRequest } from "./pattern-discovery.mjs";
+import {
   briefingOutputSchema,
   buildBriefingPrompt,
   buildCoverImagePrompt,
@@ -40,8 +46,8 @@ import {
 
 const HOST = "127.0.0.1";
 const PORT = Number.parseInt(process.env.BRIDGE_PORT || "3211", 10);
-/** Room for a 20 000 character transcript in UTF-8 plus its evidence packet. */
-const MAX_BODY_BYTES = 128 * 1024;
+/** Room for 20 complete 32k Pattern source transcripts in worst-case UTF-8 plus JSON overhead. */
+const MAX_BODY_BYTES = 3 * 1024 * 1024;
 const allowedOrigins = new Set(
   (process.env.BRIDGE_ALLOWED_ORIGINS || "http://localhost:3000,http://127.0.0.1:3000")
     .split(",")
@@ -118,6 +124,25 @@ async function runCodex(prompt, outputSchema) {
 
 /** Every POST route: validate, run, and report the same way. A Map so no path resolves through Object.prototype. */
 const routes = new Map([
+  [
+    "/v1/pattern-discovery",
+    {
+      label: "Pattern discovery",
+      failure: "The local Codex Pattern discovery failed.",
+      run: (input) => {
+        const request = validatePatternDiscoveryRequest(input);
+        return runCodex(buildPatternDiscoveryPrompt(request), request.action === "hypothesize" ? patternHypothesisOutputSchema : patternEvaluationOutputSchema);
+      },
+    },
+  ],
+  [
+    "/v1/transcript-analysis",
+    {
+      label: "Transcript analysis",
+      failure: "The local Codex transcript analysis failed.",
+      run: (input) => runCodex(buildTranscriptAnalysisPrompt(validateTranscriptAnalysisRequest(input)), transcriptAnalysisOutputSchema),
+    },
+  ],
   [
     "/v1/strategy",
     {

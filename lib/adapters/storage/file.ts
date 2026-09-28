@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Briefing, Creator, FormatReview, HashtagPost, HookRun, Idea, Run, Script, ScriptPatch, ScriptRunClaimOptions, SignalRecord, Slate, StorageAdapter, TranscriptDictionaryEntry, TranscriptSignalPatch } from "../../contracts";
+import type { CreatorCandidate, YoutubeSearchTerm, YoutubeVideo } from "../../contracts";
+import type { Briefing, Creator, FormatReview, HashtagPost, HookRun, Idea, Pattern, PatternComparisonRun, PatternEvidence, Run, SavePatternComparison, Script, ScriptPatch, ScriptRunClaimOptions, SignalRecord, Slate, StorageAdapter, TranscriptAnalysis, TranscriptDictionaryEntry, TranscriptSignalPatch, SettleTranscriptAnalysis } from "../../contracts";
 import { BRIEFING_HISTORY, HOOK_RUN_HISTORY, SLATE_HISTORY } from "../../config.ts";
 import { withSavedAt } from "../../discover-filter.ts";
 import { applyStoryboard, attachStoryboard, claimDevelop, DevelopConflictError, legacyStage, moveIdea, releaseDevelop } from "../../ideas.ts";
@@ -10,6 +11,10 @@ import { mergeSignals } from "../../refresh-window.ts";
 import { mergeHashtagPosts } from "../../hashtag-posts.ts";
 import { mergeTranscriptDictionaryEntries, normalizeTranscriptDictionary, removeTranscriptDictionaryEntry } from "../../transcript-dictionary.ts";
 import { applyCoverUpdate } from "../../cover-lab.ts";
+import { analysisText, createTranscriptAnalysis, hashTranscriptText, validateTranscriptAnalysisSettlement, TRANSCRIPT_ANALYSIS_CLAIM_TIMEOUT_MS, TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS, type TranscriptAnalysisChunkState } from "../../transcript-analysis.ts";
+import { validateCurrentPatternEvidence } from "../../pattern-comparison-validation.ts";
+import { claimCandidate, decideCandidate, mergeCandidate, settleCandidate, sortCandidates } from "../../candidates.ts";
+import { matchesOutlierQuery, mergeYoutubeVideo, normalizeOutlierQuery, sortOutliers } from "../../youtube-videos.ts";
 
 type Store = {
   creators: Creator[];
@@ -23,8 +28,14 @@ type Store = {
   hookRuns: HookRun[];
   briefings: Briefing[];
   slates: Slate[];
+  transcriptAnalyses: TranscriptAnalysis[];
+  patterns: Pattern[];
+  patternEvidence: PatternEvidence[];
+  patternComparisonRuns: PatternComparisonRun[];
+  youtubeVideos: YoutubeVideo[];
+  youtubeSearchTerms: YoutubeSearchTerm[];
+  candidates: CreatorCandidate[];
 };
-
 const STORE_PATH = path.join(process.cwd(), "data", "store.json");
 /** Runs kept in the file store; Convex keeps everything. */
 const MAX_RUNS = 100;
@@ -40,7 +51,24 @@ const MAX_FORMAT_REVIEWS = 24;
 const MAX_BRIEFINGS = 90;
 /** Slates kept in the file store. One per day, like the briefings. */
 const MAX_SLATES = 90;
-const EMPTY: Store = { creators: [], signals: [], transcriptDictionary: [], hashtagPosts: [], runs: [], ideas: [], scripts: [], formatReviews: [], hookRuns: [], briefings: [], slates: [] };
+const MAX_PATTERNS = 200;
+const MAX_PATTERN_EVIDENCE = 2_000;
+const MAX_PATTERN_RUNS = 20;
+/** Measured YouTube videos kept in the file store; the oldest measurements fall off first. */
+const MAX_YOUTUBE_VIDEOS = 5_000;
+const MAX_CANDIDATES = 1_000;
+const EMPTY: Store = { creators: [], signals: [], transcriptDictionary: [], hashtagPosts: [], runs: [], ideas: [], scripts: [], formatReviews: [], hookRuns: [], briefings: [], slates: [], transcriptAnalyses: [], patterns: [], patternEvidence: [], patternComparisonRuns: [], youtubeVideos: [], youtubeSearchTerms: [], candidates: [] };
+
+function signalKey(signal: Pick<SignalRecord, "id" | "externalId">) {
+  return signal.externalId ?? signal.id;
+}
+
+function queueForSignal(store: Store, signal: SignalRecord, now: string) {
+  if (signal.format !== "reel" || !signal.transcript?.trim() || (signal.transcriptStatus !== undefined && signal.transcriptStatus !== "ready")) return;
+  const analysis = createTranscriptAnalysis(signal, now);
+  if (!analysis || store.transcriptAnalyses.some((existing) => existing.id === analysis.id)) return;
+  store.transcriptAnalyses.push(analysis);
+}
 
 async function load(): Promise<Store> {
   let parsed: Partial<Store>;
@@ -70,6 +98,13 @@ async function load(): Promise<Store> {
     hookRuns: parsed.hookRuns ?? [],
     briefings: parsed.briefings ?? [],
     slates: parsed.slates ?? [],
+    transcriptAnalyses: parsed.transcriptAnalyses ?? [],
+    patterns: parsed.patterns ?? [],
+    patternEvidence: parsed.patternEvidence ?? [],
+    patternComparisonRuns: parsed.patternComparisonRuns ?? [],
+    youtubeVideos: parsed.youtubeVideos ?? [],
+    youtubeSearchTerms: parsed.youtubeSearchTerms ?? [],
+    candidates: parsed.candidates ?? [],
   };
   if (migrated.reset > 0) await save(store);
   return store;
@@ -157,6 +192,11 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
       const store = await load();
       const { signals, inserted, updated } = mergeSignals(store.signals, records);
       store.signals = signals;
+      const storedByKey = new Map(store.signals.map((signal) => [signalKey(signal), signal]));
+      for (const record of records) {
+        const stored = storedByKey.get(signalKey(record));
+        if (stored) queueForSignal(store, stored, new Date().toISOString());
+      }
       await save(store);
       return { inserted, updated };
     });
@@ -215,8 +255,156 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
       if (index < 0) return null;
       const patched = applyTranscriptPatch(store.signals[index], patch);
       store.signals[index] = patched;
+      queueForSignal(store, patched, patch.transcriptUpdatedAt ?? new Date().toISOString());
       await save(store);
       return patched;
+    });
+  },
+  async listTranscriptAnalyses(options = {}) {
+    const analyses = (await load()).transcriptAnalyses;
+    return [...analyses]
+      .filter((analysis) => !options.signalId || analysis.signalId === options.signalId)
+      .filter((analysis) => !options.analysisId || analysis.id === options.analysisId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, Math.min(Math.max(Math.floor(options.limit ?? 100), 1), 500));
+  },
+  async enqueueTranscriptAnalysis(signalId, now) {
+    return serialized(async () => {
+      const store = await load();
+      const signal = store.signals.find((candidate) => candidate.id === signalId);
+      if (!signal) return null;
+      const expected = createTranscriptAnalysis(signal, now);
+      queueForSignal(store, signal, now);
+      const analysis = expected
+        ? store.transcriptAnalyses.find((candidate) => candidate.id === expected.id) ?? null
+        : null;
+      await save(store);
+      return analysis;
+    });
+  },
+  async claimTranscriptAnalysis(now, claimId, analysisId) {
+    return serialized(async () => {
+      const store = await load();
+      const nowMs = Date.parse(now);
+      let expiredAttemptChanged = false;
+      for (let index = 0; index < store.transcriptAnalyses.length; index += 1) {
+        const analysis = store.transcriptAnalyses[index];
+        if (analysis.status === "running" && analysis.attempts >= TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS && Date.parse(analysis.claimExpiresAt ?? "") <= nowMs) {
+          store.transcriptAnalyses[index] = {
+            ...analysis,
+            status: "failed",
+            error: "The analysis attempt limit was reached after an expired claim.",
+            claimId: undefined,
+            claimedAt: undefined,
+            claimExpiresAt: undefined,
+          };
+          expiredAttemptChanged = true;
+        }
+      }
+      const candidate = [...store.transcriptAnalyses]
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .filter((analysis) => !analysisId || analysis.id === analysisId)
+        .find((analysis) => (
+          analysis.attempts < TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS
+          && (analysis.status === "queued" || (analysis.status === "running" && Number.isFinite(Date.parse(analysis.claimExpiresAt ?? "")) && Date.parse(analysis.claimExpiresAt!) <= nowMs))
+        ));
+      if (!candidate) {
+        if (expiredAttemptChanged) await save(store);
+        return null;
+      }
+      const claimed = {
+        ...candidate,
+        status: "running" as const,
+        attempts: candidate.attempts + 1,
+        claimedAt: now,
+        claimExpiresAt: new Date(nowMs + TRANSCRIPT_ANALYSIS_CLAIM_TIMEOUT_MS).toISOString(),
+        claimId,
+        error: undefined,
+      };
+      const index = store.transcriptAnalyses.findIndex((analysis) => analysis.id === candidate.id);
+      store.transcriptAnalyses[index] = claimed;
+      await save(store);
+      return claimed;
+    });
+  },
+  async settleTranscriptAnalysis(id, claimId, result: SettleTranscriptAnalysis) {
+    return serialized(async () => {
+      const store = await load();
+      const index = store.transcriptAnalyses.findIndex((analysis) => analysis.id === id);
+      if (index < 0 || store.transcriptAnalyses[index].claimId !== claimId) return null;
+      const current = store.transcriptAnalyses[index];
+      const signal = store.signals.find((candidate) => candidate.id === current.signalId);
+      const source = signal ? analysisText(signal) : null;
+      if (!source || source.textVersion !== current.textVersion || hashTranscriptText(source.text) !== current.textHash) return null;
+      validateTranscriptAnalysisSettlement(result, source.text);
+      const settled: TranscriptAnalysis = {
+        ...current,
+        status: result.status,
+        ...(result.framework === undefined ? {} : { framework: result.framework }),
+        ...(result.frameworkEvidence === undefined ? {} : { frameworkEvidence: result.frameworkEvidence }),
+        ...(result.findings === undefined ? {} : { findings: result.findings }),
+        ...(result.chunks === undefined ? {} : { chunks: result.chunks as TranscriptAnalysisChunkState[] }),
+        ...(result.textLength === undefined ? {} : { textLength: result.textLength }),
+        ...(result.complete === undefined ? {} : { complete: result.complete }),
+        ...(result.status === "failed" ? { error: result.error || "Transcript analysis failed." } : { error: undefined, completedAt: result.now }),
+        claimedAt: undefined,
+        claimExpiresAt: undefined,
+        claimId: undefined,
+      };
+      store.transcriptAnalyses[index] = settled;
+      await save(store);
+      return settled;
+    });
+  },
+  async retryTranscriptAnalysis(id, now) {
+    return serialized(async () => {
+      const store = await load();
+      const index = store.transcriptAnalyses.findIndex((analysis) => analysis.id === id);
+      if (index < 0) return null;
+      const current = store.transcriptAnalyses[index];
+      if (current.status !== "failed") throw new Error("Only failed analyses can be retried.");
+      if (current.attempts >= TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS) throw new Error("The analysis attempt limit has been reached.");
+      store.transcriptAnalyses[index] = { ...current, status: "queued", error: undefined, createdAt: now, claimedAt: undefined, claimExpiresAt: undefined, claimId: undefined };
+      await save(store);
+      return store.transcriptAnalyses[index];
+    });
+  },
+  async listPatternComparisons(limit = 20) {
+    const store = await load();
+    return [...store.patternComparisonRuns]
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, Math.min(Math.max(Math.floor(limit), 1), 100))
+      .flatMap((run) => {
+        const pattern = store.patterns.find((item) => item.id === run.patternId);
+        if (!pattern) return [];
+        const ids = new Set([...run.positiveEvidenceIds, ...run.negativeEvidenceIds, ...run.unknownEvidenceIds]);
+        return [{ pattern, run, evidence: store.patternEvidence.filter((item) => ids.has(item.id)) }];
+      });
+  },
+  async savePatternComparison(result: SavePatternComparison) {
+    return serialized(async () => {
+      const store = await load();
+      const existingRun = store.patternComparisonRuns.find((item) => item.id === result.run.id);
+      if (existingRun) {
+        const pattern = store.patterns.find((item) => item.id === existingRun.patternId) ?? result.pattern;
+        const ids = new Set([...existingRun.positiveEvidenceIds, ...existingRun.negativeEvidenceIds, ...existingRun.unknownEvidenceIds]);
+        return { pattern, run: existingRun, evidence: store.patternEvidence.filter((item) => ids.has(item.id)) };
+      }
+      validateCurrentPatternEvidence(result.evidence, store.signals, store.transcriptAnalyses);
+      const patternIndex = store.patterns.findIndex((item) => item.id === result.pattern.id);
+      if (patternIndex >= 0) {
+        const existing = store.patterns[patternIndex];
+        store.patterns[patternIndex] = { ...existing, ...result.pattern, status: existing.status === "candidate" && result.pattern.status === "hypothesis" ? "candidate" : result.pattern.status, createdAt: existing.createdAt };
+      }
+      else store.patterns.push(result.pattern);
+      const evidenceIds = new Set(store.patternEvidence.map((item) => item.id));
+      store.patternEvidence.push(...result.evidence.filter((item) => !evidenceIds.has(item.id)));
+      store.patternComparisonRuns.push(result.run);
+      store.patterns = store.patterns.slice(-MAX_PATTERNS);
+      store.patternEvidence = store.patternEvidence.slice(-MAX_PATTERN_EVIDENCE);
+      store.patternComparisonRuns = store.patternComparisonRuns.slice(-MAX_PATTERN_RUNS);
+      await save(store);
+      return result;
     });
   },
   async listTranscriptDictionary() {
@@ -442,6 +630,109 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
       store.scripts[index] = moved;
       await save(store);
       return moved;
+    });
+  },
+  async saveYoutubeVideos(videos) {
+    return serialized(async () => {
+      const store = await load();
+      const byId = new Map(store.youtubeVideos.map((video) => [video.id, video]));
+      const seen = new Set<string>();
+      let inserted = 0;
+      let updated = 0;
+      for (const video of videos) {
+        const existing = byId.get(video.id) ?? null;
+        byId.set(video.id, mergeYoutubeVideo(existing, video));
+        if (seen.has(video.id)) continue;
+        seen.add(video.id);
+        if (existing) updated += 1;
+        else inserted += 1;
+      }
+      store.youtubeVideos = [...byId.values()].sort((a, b) => b.measuredAt.localeCompare(a.measuredAt)).slice(0, MAX_YOUTUBE_VIDEOS);
+      await save(store);
+      return { inserted, updated };
+    });
+  },
+  async listYoutubeOutliers(query = {}) {
+    const normalized = normalizeOutlierQuery(query);
+    return sortOutliers((await load()).youtubeVideos.filter((video) => matchesOutlierQuery(video, normalized))).slice(0, normalized.limit);
+  },
+  async listYoutubeSearchTerms() {
+    return [...(await load()).youtubeSearchTerms].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  },
+  async saveYoutubeSearchTerm(term) {
+    await serialized(async () => {
+      const store = await load();
+      store.youtubeSearchTerms = [...store.youtubeSearchTerms.filter((item) => item.id !== term.id), term];
+      await save(store);
+    });
+  },
+  async removeYoutubeSearchTerm(id) {
+    return serialized(async () => {
+      const store = await load();
+      const before = store.youtubeSearchTerms.length;
+      store.youtubeSearchTerms = store.youtubeSearchTerms.filter((item) => item.id !== id);
+      if (store.youtubeSearchTerms.length === before) return false;
+      await save(store);
+      return true;
+    });
+  },
+  async listCandidates(options = {}) {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    const rows = (await load()).candidates
+      .filter((candidate) => !options.network || candidate.network === options.network)
+      .filter((candidate) => !options.decision || candidate.decision === options.decision);
+    return sortCandidates(rows).slice(0, limit);
+  },
+  async getCandidate(key) {
+    return (await load()).candidates.find((candidate) => candidate.key === key) ?? null;
+  },
+  async mergeCandidates(candidates) {
+    return serialized(async () => {
+      const store = await load();
+      const byKey = new Map(store.candidates.map((candidate) => [candidate.key, candidate]));
+      let inserted = 0;
+      let updated = 0;
+      for (const incoming of candidates) {
+        const existing = byKey.get(incoming.key) ?? null;
+        byKey.set(incoming.key, mergeCandidate(existing, incoming));
+        if (existing) updated += 1;
+        else inserted += 1;
+      }
+      store.candidates = [...byKey.values()].slice(-MAX_CANDIDATES);
+      await save(store);
+      return { inserted, updated };
+    });
+  },
+  async decideCandidate(key, decision, now) {
+    return serialized(async () => {
+      const store = await load();
+      const index = store.candidates.findIndex((candidate) => candidate.key === key);
+      if (index < 0) return null;
+      store.candidates[index] = decideCandidate(store.candidates[index], decision, now);
+      await save(store);
+      return store.candidates[index];
+    });
+  },
+  async claimCandidate(key, claimId, now) {
+    return serialized(async () => {
+      const store = await load();
+      const index = store.candidates.findIndex((candidate) => candidate.key === key);
+      if (index < 0) return null;
+      store.candidates[index] = claimCandidate(store.candidates[index], claimId, now);
+      await save(store);
+      return store.candidates[index];
+    });
+  },
+  async settleCandidate(key, claimId, result) {
+    return serialized(async () => {
+      const store = await load();
+      const index = store.candidates.findIndex((candidate) => candidate.key === key);
+      if (index < 0) return null;
+      const settled = settleCandidate(store.candidates[index], claimId, result);
+      if (!settled) return null;
+      store.candidates[index] = settled;
+      await save(store);
+      return settled;
     });
   },
 };

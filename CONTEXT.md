@@ -5,7 +5,7 @@ Glossar für Signal Room (Instagram-Reels-Intelligence für Chris' Nische). Wer 
 ## Kernobjekte
 
 **Creator**
-Ein beobachteter Instagram-Account mit `handle`, `audience` (Follower) und `network`; im Code der Typ `Creator`, beim Auflösen über Apify heißt dasselbe Feld noch `followers` in `ResolvedProfile`.
+Ein beobachteter Instagram-Account oder YouTube-Kanal mit `handle`, `audience` (Follower bzw. Abonnenten) und `network`; ein YouTube-Creator hat die id `youtube-<Kanal-ID>`; im Code der Typ `Creator`, beim Auflösen über Apify heißt dasselbe Feld noch `followers` in `ResolvedProfile`.
 Nicht: "Channel", "Account", "Profil" (Profil meint nur den Profile-Tab der App).
 
 **Signal**
@@ -98,7 +98,35 @@ Der Faktor `plays / median(plays)` über den gehaltenen Korpus desselben Creator
 Nicht: "Baseline-Ratio", "Creator-Relative", "Median-Score".
 
 **Schwelle**
-Der Faktor, ab dem ein Signal als Outlier gilt und Badge, Zähler und Outlier-Filter greifen. In Discover wählbar (1.5x, 2x, 3x, 5x), Standard `DEFAULT_OUTLIER_THRESHOLD` = 2 in `lib/discover-filter.ts`, re-exportiert als `OUTLIER_THRESHOLD` in `lib/config.ts`.
+Der Faktor, ab dem ein Signal als Outlier gilt und Badge, Zähler und Outlier-Filter greifen. In Discover wählbar (1.5x, 2x, 3x, 5x), je Netzwerk getrennt gemerkt. Standard für Instagram `DEFAULT_OUTLIER_THRESHOLD` = 2 in `lib/discover-filter.ts`, re-exportiert als `OUTLIER_THRESHOLD` in `lib/config.ts`; für YouTube `YOUTUBE_DEFAULT_THRESHOLD` = 3.
+
+**YouTube-Outlier**
+Bei YouTube ist der Outlier `views / Kanal-Median` (ADR-0007, `lib/adapters/scoring/youtube-outlier.ts`); 3.0 heißt dreimal so viele Aufrufe wie ein übliches Longform-Video des Kanals. Ein Short hat den Faktor 0. Daneben stehen Aufrufe pro Abo und Aufrufe pro Tag, beide nur als Anzeige.
+Nicht: "Performance-Score", "Viralität".
+
+**Kanal-Median**
+Der Median der Aufrufe der letzten 30 Longform-Videos desselben YouTube-Kanals (`youtubeBaseline`). Unter 5 Longform-Videos gibt es keinen, dann ist der Faktor 0.
+Nicht: "Channel-Relative" (das ist der Instagram-Median über den gehaltenen Korpus), "Durchschnitt".
+
+**Longform**
+Ein YouTube-Video, das kein Short ist, gespeichert mit `format: "long"`. Was in YouTubes Playlist `UULF<Kanal>` steht, ist Longform, auch wenn es kürzer als drei Minuten ist; sonst entscheidet die Dauer (über 180 s) und `#shorts` im Titel. Short heißt `format: "short"` und zählt nirgends.
+Nicht: "Video" allein, "Long-Video".
+
+**Suchlauf**
+Ein protokollierter Run der Art `youtube-search` (`runYoutubeSearch` in `lib/youtube-search.ts`, `POST /api/youtube/search`): Suchbegriff, dann Videos, dann Kanal-Median je gefundenem Kanal, dann Outlier. Funde landen in `youtubeVideos`, Kanäle mit einem Fund ab 3x und 5.000 Aufrufen als Kandidaten. Der Run trägt `queries` und `youtubeQuota`.
+Nicht: "Scan", "Crawl", "Discovery-Run".
+
+**Suchbegriff**
+Ein Eintrag der Tabelle `youtubeSearchTerms` mit Begriff, Markt (`de`/`en`) und Thema (`claude`, `agents`, `ai-os`, `automation`). Bis Chris die Liste ändert, gelten die Start-Begriffe aus `lib/youtube-terms.ts`; die erste Änderung schreibt sie in den Store.
+Nicht: "Keyword", "Hashtag" (Hashtag gehört zum Instagram-Hashtag-Sweep).
+
+**Kandidat**
+Ein Creator, den Signal Room für die Watchlist vorschlägt, Tabelle `creatorCandidates` (P4-05). Schlüssel `<network>:<id>`, bei YouTube die Kanal-ID. Trägt Begründung, Quellen, Belege (bis zu 5 Outlier-Videos), Datenstand und die Entscheidung `proposed`, `selected`, `accepted`, `rejected` oder `deferred`. Ein neuer Fund führt Quellen und neuere Zahlen zusammen, ändert aber nie die Entscheidung. Aufnehmen (P4-09, `POST /api/candidates/accept`) beansprucht den Kandidaten atomar, löst den Kanal auf, fährt den Backfill und setzt `accepted` mit `creatorId`; ein Fehler lässt ihn `selected` mit `acceptError`, der nächste Klick setzt dort fort. Ein bereits getrackter Creator wird ohne Backfill verbunden.
+Nicht: "Lead", "Vorschlag", "Empfehlung".
+
+**Quota**
+Das Tagesbudget der YouTube Data API, Reset um Mitternacht Pacific, in zwei Töpfen: 10.000 Einheiten für alles außer der Suche (jeder Aufruf 1) und 100 Suchaufrufe (`search.list`). Im klassischen Modell kostet eine Suche 100 Einheiten, dann `YOUTUBE_SEARCH_UNIT_COST=100`. Jeder YouTube-Run speichert `youtubeQuota` (Einheiten und Aufrufe je Methode); der Profile-Tab zeigt sie unter den Kosten.
+Nicht: "Kosten" (die meinen Apify-Dollar), "Rate-Limit".
 Nicht: "Cutoff", "Limit", "Grenzwert".
 
 ## Formate und Inhalte
@@ -163,6 +191,22 @@ Nicht: "Prompt", "Instruktion", "Feedback", "Direction" (nur als Feldname und en
 
 ## Ergänzende Begriffe
 
+**TranscriptAnalysis**
+Die gespeicherte Inhaltsanalyse eines fertigen Reel-Transkripts. Sie referenziert Signal, Textfassung, Text-Hash, Analyseversion und Lauf. PAS oder BBB sowie Hook, Spannung, offene Schleifen, Beweise, Beispiele, Übergänge, Rhythmus und CTA werden nur mit wörtlichen Fundstellen und Zeichenpositionen gespeichert. BBB bedeutet Behaupten, Begründen, Beispiel.
+Nicht: "Format Signal", "Caption-Analyse", "Zusammenfassung".
+
+**Textfassung**
+Der genaue Text, den eine TranscriptAnalysis geprüft hat. Eine vorhandene Arbeitsfassung hat Vorrang vor dem unveränderten Original. Ändert sich die bevorzugte Fassung oder ihr Hash, bleibt das frühere Ergebnis lesbar und wird als veraltet angezeigt. Zeitmarken erscheinen nur, wenn eine Fundstelle eindeutig auf ein Segment des Originals zurückgeführt werden kann.
+Nicht: "Version" ohne Bezug zum Text, "bereinigtes Original".
+
+**Analyse-Claim**
+Die atomare, zeitlich begrenzte Reservierung eines vorgemerkten Analysejobs durch den lokalen Worker. Ein manueller Lauf beansprucht die ausgewählte Analyse-ID; ein Batch beansprucht den ältesten verfügbaren Job. Ein abgelaufener Claim darf bis zum Versuchslimit übernommen werden. Claim-ID und Text-Hash verhindern, dass ein verspätetes Ergebnis eine neuere Fassung ersetzt.
+Nicht: "Transkript-Claim", "Lock".
+
+**Teilabdeckung**
+Eine gespeicherte Analyse, bei der das Zeichenlimit nicht alle Textteile erreicht hat. Geprüfte und fehlende Chunks bleiben sichtbar; `complete: false` verhindert, dass sie als vollständige Volltextanalyse zählt.
+Nicht: "fertige Vollanalyse", "stille Kürzung".
+
 **Skript**
 Ein eigenes Produktionsobjekt in der Tabelle `scripts`, verbunden mit einer Idea, einem optionalen Quell-Reel und weiteren Belegen. Das Skript beginnt in `hook-selection`, trägt Hook-Optionen und Abschnitte und bleibt vom Storyboard getrennt. Der Hauptbereich ist der `Scripts`-Tab, einzelne Skripte liegen unter `/script/<id>`. Der Text wird im Store gehalten und nie in den Vault oder in Git geschrieben. Ein freigegebenes Skript ist bis zum bewussten Wiederöffnen unveränderlich.
 Nicht: "Storyboard", "Outline", "Shotlist", "Konzept".
@@ -226,3 +270,11 @@ Nicht: "Kontext", "Prompt-Daten", "Sample".
 **Bridge**
 Der lokale Prozess `bridge/server.mjs`, der Strategy-Anfragen der Web-App entgegennimmt und ans Codex SDK weiterreicht.
 Nicht: "Proxy", "Gateway", "API".
+
+**Pattern**
+Eine gespeicherte, operational prüfbare Strukturhypothese aus vollständigen Reel-Transkripten. Ein Pattern-Vergleich lässt den lokalen Bridge dieselbe Definition je aktueller, vollständiger Inhaltsanalyse ausdrücklich als `present` oder `absent` prüfen; fehlende, unvollständige oder veraltete Analysen bleiben `unknown`. Ein Kandidat braucht die konfigurierte Basis von fünf vorhandenen Reels aus drei Creators, fünf abwesenden Reels und eine positive Outlier-Median-Differenz innerhalb derselben Vergleichszelle. Das ist ein beobachteter Zusammenhang ohne Kausalitätsversprechen.
+Nicht: "Format Signal" (regelbasierte Hook-Form), "Framework" (PAS/BBB/none), "Erfolgsrezept".
+
+**Pattern-Vergleichslauf**
+Der gespeicherte, idempotente Stand einer Pattern-Definition gegen eine konkrete Datenbasis. Definition, Lauf und begrenzte Reel-Belege liegen getrennt. Der Lauf speichert Markt, Nischenklasse, Topic, Veröffentlichungsaltersgruppe, Owned-Gruppe, 90-Tage-Fenster, Stichproben, Mediane, Differenz, unbekannte und ausgeschlossene Daten. Fehlende Gegenbelege werden nur nach bewusster Reel-Auswahl über die bestehende manuelle Transkriptaktion ergänzt.
+Nicht: "A/B-Test", "Signifikanztest", "automatischer Backfill".

@@ -105,7 +105,21 @@ Then use **Generate angle** in Ideas. It sends the strongest outlier reels of th
 - does not place auth material in client code
 - refuses a run when Codex is not logged in, instead of spawning it
 
+The Reel view also queues finished transcripts for a bounded content-analysis worker. Manual analysis and retry run through `/api/transcript-analyses`; cloud refreshes leave jobs queued until the local Bridge is available. The stored result names its text version, hash and analysis version, and every finding must match a literal source range.
+
+Run one bounded local worker batch with `npm run worker:transcript-analysis`. The command loads `.env.local` before selecting Convex or the file fallback and includes that choice as `storage` in its JSON result. `npm run worker:transcript-analysis -- --check-storage` checks the selection without claiming work. An optional numeric argument such as `npm run worker:transcript-analysis -- 5` changes the batch size up to 20.
+
+Content analysis v2 stores literal evidence for every PAS or BBB component. The default full-text limit is 32,000 characters in eight chunks; longer transcripts remain visibly partial. The Bridge accepts at most 20 chunks, so configurations that produce more than 20 chunks are rejected instead of being reported as a full analysis.
+
+Queue up to 20 older finished transcripts before that worker pass with `curl -X POST http://localhost:3000/api/transcript-analyses -H 'content-type: application/json' -d '{"action":"catch-up","limit":20}'`. One request checks at most 1,000 finished Reels. If the response contains `nextCursor`, repeat the request with that value as `cursor` to continue after the last inspected Signal. Convex mode also requires the same random `TRANSCRIPT_ANALYSIS_WORKER_TOKEN` in `.env.local` and the Convex deployment. The token remains server-side.
+
+```bash
+curl -X POST http://localhost:3000/api/transcript-analyses -H 'content-type: application/json' -d '{"action":"catch-up","limit":20,"cursor":"ig-last-inspected"}'
+```
+
 The SDK uses the authentication context available to the local Codex CLI process. See the [official Codex documentation](https://developers.openai.com/codex/) for current setup guidance.
+
+Pattern discovery uses the same 32,000-character complete-text boundary. It accepts at most 20 source Reels in one bounded local request and rechecks every evaluated analysis against the current text inside the storage transaction before saving a comparison.
 
 ## The four extension contracts
 

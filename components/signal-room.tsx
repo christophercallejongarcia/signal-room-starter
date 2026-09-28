@@ -37,6 +37,7 @@ import Link from "next/link";
 import { CoverImage, formatNumber, formatOutlier, networkName, timeAgo } from "@/components/display";
 import { ReelDetailPanel, TranscriptStatusBadge } from "@/components/reel-detail";
 import { DiscoverFeed } from "@/components/discover-feed";
+import { YoutubeRadar } from "@/components/youtube-radar";
 import { TAB_PARAM, creatorPath, creatorStats } from "@/lib/creator-detail";
 import { rankCorpus, DEMO_NOW, type Ranked } from "@/lib/rank-corpus";
 import { demoCreators, demoHashtagPosts, demoScriptIdeaTitles, demoScripts, demoSignals } from "@/lib/demo-data";
@@ -75,6 +76,7 @@ import {
   STRATEGY_BRIDGE_URL,
   STRATEGY_EVIDENCE_LIMIT,
   STRATEGY_EVIDENCE_WINDOW_DAYS,
+  YOUTUBE_DEFAULT_THRESHOLD,
 } from "@/lib/config";
 import { parseHookRequest, type HookRequestInput } from "@/lib/hooks-board";
 import { COVER_FORMATS, type CoverFormat, type CoverTreatment } from "@/lib/cover-lab";
@@ -85,8 +87,10 @@ import { nextRefreshAt, REFRESH_TIME_ZONE, REFRESH_ZONE_LABEL } from "@/lib/refr
 import { selectEvidence } from "@/lib/strategy-evidence";
 import { UNCLASSIFIED, buildFormatSignals, type FormatSignal } from "@/lib/format-signals";
 import { buildTrendRadar, type TrendRadar } from "@/lib/trend-radar";
+import { PatternComparisons, type PatternComparisonState } from "@/components/pattern-comparisons";
+import { demoPatternComparisons } from "@/lib/demo-patterns";
 
-import type { Briefing, CoverBoard, Forecast, FormatReview, FormatReviewPattern, HookRun, Idea, IdeaStatus, PatternMove, RefreshResult, Run, RunUsage, Script, ScriptStatus, SignalRecord, Slate, TranscriptDictionaryEntry } from "@/lib/contracts";
+import type { Briefing, CoverBoard, Forecast, FormatReview, FormatReviewPattern, HookRun, Idea, IdeaStatus, PatternMove, RefreshResult, Run, RunUsage, SavePatternComparison, Script, ScriptStatus, SignalRecord, Slate, TranscriptDictionaryEntry } from "@/lib/contracts";
 import type { MonthUsage } from "@/lib/run-cost";
 import type { Creator, Network, StrategyEvidenceItem } from "@/lib/contracts";
 
@@ -266,7 +270,14 @@ export function SignalRoom() {
   const [runsMonth, setRunsMonth] = useState<MonthUsage | null>(null);
   const [runsState, setRunsState] = useState<"loading" | "ready" | "error">("loading");
   const [addState, setAddState] = useState<"idle" | "loading" | "error">("idle");
-  const [threshold, setThreshold] = useState<OutlierThreshold>(DEFAULT_OUTLIER_THRESHOLD);
+  // Each network keeps its own Schwelle: Instagram reads against followers (2x), YouTube against the channel median (3x, ADR-0007).
+  const [thresholds, setThresholds] = useState<Record<Network, OutlierThreshold>>({
+    instagram: DEFAULT_OUTLIER_THRESHOLD,
+    tiktok: DEFAULT_OUTLIER_THRESHOLD,
+    youtube: YOUTUBE_DEFAULT_THRESHOLD as OutlierThreshold,
+  });
+  const threshold = thresholds[network];
+  const setThreshold = (value: OutlierThreshold) => setThresholds((current) => ({ ...current, [network]: value }));
 
   async function loadStore() {
     const response = await fetch("/api/signals");
@@ -471,6 +482,29 @@ export function SignalRoom() {
     }
   }
 
+  async function loadPatternComparisons() {
+    try {
+      const response = await fetch("/api/patterns", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = (await response.json()) as { comparisons: SavePatternComparison[] };
+      setPatternComparisons({ items: data.comparisons, phase: "ready", error: "" });
+    } catch {
+      setPatternComparisons((current) => ({ ...current, phase: "error", error: "Pattern-Vergleiche konnten nicht geladen werden." }));
+    }
+  }
+
+  async function runPatternDiscovery(sourceSignalIds: string[], scope: { market: "de" | "en"; niche: "core" | "foreign"; topic: string; ageBucket: "0-7" | "8-30" | "31-90"; owned: boolean }) {
+    setPatternComparisons((current) => ({ ...current, phase: "running", error: "" }));
+    try {
+      const response = await fetch("/api/patterns", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sourceSignalIds, ...scope }) });
+      const payload = (await response.json().catch(() => ({}))) as SavePatternComparison & { error?: string };
+      if (!response.ok || !payload.run) throw new Error(payload.error || `HTTP ${response.status}`);
+      setPatternComparisons((current) => ({ items: [payload, ...current.items.filter((item) => item.run.id !== payload.run.id)], phase: "ready", error: "" }));
+    } catch (error) {
+      setPatternComparisons((current) => ({ ...current, phase: "ready", error: error instanceof Error ? error.message : "Pattern-Lauf fehlgeschlagen." }));
+    }
+  }
+
   async function loadTrendRadar() {
     try {
       const response = await fetch("/api/trends", { cache: "no-store" });
@@ -535,6 +569,7 @@ export function SignalRoom() {
     loadBriefings();
     loadSlates();
     loadFormatReview();
+    loadPatternComparisons();
     loadTrendRadar();
     checkBridge();
   }, []);
@@ -557,6 +592,7 @@ export function SignalRoom() {
     error: "",
   });
   const [review, setReview] = useState<ReviewState>({ review: null, phase: "loading" });
+  const [patternComparisons, setPatternComparisons] = useState<PatternComparisonState>({ items: [], phase: "loading", error: "" });
   const [trend, setTrend] = useState<TrendState>({ radar: null, phase: "loading", error: "" });
   const [hooks, setHooks] = useState<HooksState>({ runs: [], phase: "loading", running: 0, error: "", selected: null });
   const [covers, setCovers] = useState<CoverState>({ phase: "idle", run: null, error: "" });
@@ -632,7 +668,7 @@ export function SignalRoom() {
     const market = form.get("market") === "en" ? "en" : "de";
     if (!handle) return;
 
-    if (network === "instagram") {
+    if (network === "instagram" || network === "youtube") {
       setAddState("loading");
       try {
         const response = await fetch("/api/creators", {
@@ -935,6 +971,7 @@ export function SignalRoom() {
             onCreateIdea={captureIdea}
             onToggleSaved={toggleSaved}
             onOpenReel={openReel}
+            onWatchlistChanged={() => { loadStore().catch(() => {}); loadRuns(); }}
           />
         )}
         {activeTab === "briefing" && (
@@ -963,9 +1000,14 @@ export function SignalRoom() {
           <FormatsView
             rankedSignals={rankedSignals}
             creators={creators}
-            threshold={threshold}
+            threshold={thresholds.instagram}
             review={review}
             onRunReview={runFormatReview}
+            patternComparisons={patternComparisons}
+            signals={signals}
+            live={live}
+            onDiscoverPattern={runPatternDiscovery}
+            onOpenReel={openReel}
           />
         )}
         {activeTab === "channels" && (
@@ -1067,6 +1109,7 @@ function DiscoverView({
   onCreateIdea,
   onToggleSaved,
   onOpenReel,
+  onWatchlistChanged,
 }: {
   rankedSignals: Ranked[];
   creators: Creator[];
@@ -1079,6 +1122,7 @@ function DiscoverView({
   onCreateIdea: (input: IdeaInput) => void;
   onToggleSaved: (signal: SignalRecord) => void;
   onOpenReel: (signalId: string) => void;
+  onWatchlistChanged: () => void;
 }) {
   const [view, setView] = useState<DiscoverViewMode>("all");
   const [published, setPublished] = useState<PublishedWindow>("90");
@@ -1103,6 +1147,22 @@ function DiscoverView({
   const saved = countSaved(rankedSignals, creators, filters);
   const filtered = sortDiscover(filterDiscover(rankedSignals, creators, { ...filters, view }), sort);
   const feedKey = JSON.stringify([network, view, published, channel, sort, threshold, perPage]);
+  const [ytRefresh, setYtRefresh] = useState<{ running: boolean; note: string }>({ running: false, note: "" });
+
+  /** YouTube only: fresh numbers for the watchlist channels, logged as a refresh run with its quota. */
+  async function refreshYoutube() {
+    setYtRefresh({ running: true, note: "" });
+    try {
+      const response = await fetch("/api/refresh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ network: "youtube" }) });
+      const result = (await response.json().catch(() => ({}))) as RefreshResult & { error?: string };
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      const failed = result.errors?.length ?? 0;
+      setYtRefresh({ running: false, note: `${result.creatorsChecked} Kanäle gemessen, ${result.recordsAdded} neu, ${result.recordsUpdated} aktualisiert${failed ? `, ${failed} Fehler` : ""}. Quota: ${result.youtubeQuota?.units ?? 0} Einheiten.` });
+      onWatchlistChanged();
+    } catch (error) {
+      setYtRefresh({ running: false, note: error instanceof Error ? error.message : "Refresh fehlgeschlagen." });
+    }
+  }
   const isIg = network === "instagram";
 
   return (
@@ -1122,7 +1182,9 @@ function DiscoverView({
           <p className="hero-kicker">Tracked {isIg ? "Instagram" : "AI"} channels / updated daily</p>
           <h1>{isIg ? "Instagram content feed" : "Competitor video feed"}</h1>
           <p className="hero-sub">
-            Every tracked upload lives in one place, newest first. Switch to Outliers when you want performance analysis instead of a chronological feed.
+            {isIg
+              ? "Every tracked upload lives in one place, newest first. Switch to Outliers when you want performance analysis instead of a chronological feed."
+              : "The Outlier-Radar searches the niche and suggests channels; below it every long-form upload of the watchlist channels, scored against the channel median."}
           </p>
         </div>
         <div className="stat-blocks">
@@ -1133,6 +1195,31 @@ function DiscoverView({
         </div>
       </section>
 
+      {!isIg && (
+        <YoutubeRadar
+          threshold={threshold}
+          trackedYoutube={networkCreators.length}
+          onWatchlistChanged={onWatchlistChanged}
+          onCreateIdea={onCreateIdea}
+        />
+      )}
+
+      {!isIg && (
+        <div className="section-head">
+          <div>
+            <p className="kicker">Watchlist</p>
+            <h2>Longform der YouTube-Kanäle in der Watchlist</h2>
+            <p className="yt-refresh-line" role="status">
+              <button className="ghost-button" type="button" onClick={refreshYoutube} disabled={ytRefresh.running}>
+                <ArrowsClockwise className={ytRefresh.running ? "spin" : ""} size={13} /> {ytRefresh.running ? "Frische auf…" : "YouTube-Watchlist auffrischen"}
+              </button>
+              {ytRefresh.note && <span>{ytRefresh.note}</span>}
+            </p>
+          </div>
+          <p className="note">Jeder Refresh misst die letzten 50 Longform-Videos jedes Kanals neu, weil Longform wochenlang Aufrufe sammelt. Kostet Quota (rund 3 Einheiten pro Kanal), kein Apify.</p>
+        </div>
+      )}
+
       <section className="filter-bar" aria-label="Filters">
         <div>
           <span className="filter-label">View</span>
@@ -1142,7 +1229,7 @@ function DiscoverView({
             <button className={view === "saved" ? "active" : ""} onClick={() => setView("saved")}>Saved</button>
           </div>
           <p className="filter-hint">
-            {view === "outliers" ? "Above the selected audience multiplier" : view === "saved" ? "Only what you saved" : "Every matching upload"}
+            {view === "outliers" ? (isIg ? "Above the selected audience multiplier" : "Above the selected channel-median multiplier") : view === "saved" ? "Only what you saved" : "Every matching upload"}
           </p>
         </div>
         <div>
@@ -1167,7 +1254,7 @@ function DiscoverView({
           <label htmlFor="f-threshold">Outlier threshold</label>
           <select id="f-threshold" value={threshold} onChange={(e) => onThreshold(Number(e.target.value) as OutlierThreshold)}>
             {OUTLIER_THRESHOLDS.map((value) => (
-              <option key={value} value={value}>{formatThreshold(value)} audience</option>
+              <option key={value} value={value}>{formatThreshold(value)} {isIg ? "audience" : "channel median"}</option>
             ))}
           </select>
         </div>
@@ -1243,13 +1330,22 @@ function DiscoverView({
                     <span>{signal.topic}</span>
                   </div>
                   <h2>{signal.title}</h2>
-                  <p>{signal.caption ?? signal.reason}</p>
-                  <div className="signal-stats">
-                    <span><strong>{formatNumber(reach)}</strong> {isIg ? "plays" : "views"}</span>
-                    <span><strong>{formatNumber(signal.likes)}</strong> likes</span>
-                    <span><strong>{formatNumber(signal.comments)}</strong> comments</span>
-                    <span><strong className="lime">{(signal.outlier ?? 0).toFixed(1)}x</strong></span>
-                  </div>
+                  <p>{isIg ? signal.caption ?? signal.reason : signal.reason}</p>
+                  {isIg ? (
+                    <div className="signal-stats">
+                      <span><strong>{formatNumber(reach)}</strong> plays</span>
+                      <span><strong>{formatNumber(signal.likes)}</strong> likes</span>
+                      <span><strong>{formatNumber(signal.comments)}</strong> comments</span>
+                      <span><strong className="lime">{(signal.outlier ?? 0).toFixed(1)}x</strong></span>
+                    </div>
+                  ) : (
+                    <div className="signal-stats">
+                      <span><strong>{formatNumber(reach)}</strong> views</span>
+                      <span title="Views per subscriber"><strong>{signal.viewsPerSubscriber ? signal.viewsPerSubscriber.toFixed(2) : "–"}</strong> /sub</span>
+                      <span><strong>{formatNumber(signal.viewsPerDay ?? 0)}</strong> /day</span>
+                      <span><strong className="lime">{(signal.outlier ?? 0).toFixed(1)}x</strong></span>
+                    </div>
+                  )}
                   <div className="signal-actions">
                     <span className="signal-buttons">
                       {signal.format === "reel" && (
@@ -1876,12 +1972,22 @@ function FormatsView({
   threshold,
   review,
   onRunReview,
+  patternComparisons,
+  signals,
+  live,
+  onDiscoverPattern,
+  onOpenReel,
 }: {
   rankedSignals: Ranked[];
   creators: Creator[];
   threshold: number;
   review: ReviewState;
   onRunReview: () => void;
+  patternComparisons: PatternComparisonState;
+  signals: SignalRecord[];
+  live: boolean;
+  onDiscoverPattern: (sourceSignalIds: string[], scope: { market: "de" | "en"; niche: "core" | "foreign"; topic: string; ageBucket: "0-7" | "8-30" | "31-90"; owned: boolean }) => void;
+  onOpenReel: (id: string) => void;
 }) {
   const { own, foreign, en } = useMemo(
     () => buildFormatSignals(rankedSignals, creators, { now: Date.now(), threshold }),
@@ -1909,6 +2015,8 @@ function FormatsView({
       </section>
 
       <FormatReviewPanel state={review} onRun={onRunReview} />
+
+      <PatternComparisons state={patternComparisons} signals={signals} creators={creators} demo={live ? [] : demoPatternComparisons} onDiscover={onDiscoverPattern} onOpenReel={onOpenReel} />
 
       {own.total === 0 && (
         <div className="empty-state">
@@ -2993,7 +3101,7 @@ function ProfileView({ creators, rankedSignals, runs, runsMonth, runsState }: { 
         </tbody>
       </table>
 
-      <div className="section-head"><div><p className="kicker">Collection log</p><h2>Last runs</h2></div><p className="note">Every refresh is logged: window, counts, Apify cost, and which creators failed. A failing creator keeps its cursor and is retried next run. A refresh touches at most the configured number of creators; the rest keep their cursor and go first next time.</p></div>
+      <div className="section-head"><div><p className="kicker">Collection log</p><h2>Last runs</h2></div><p className="note">Every refresh is logged: window, counts, Apify cost, YouTube quota units, and which creators failed. A failing creator keeps its cursor and is retried next run. A refresh touches at most the configured number of creators; the rest keep their cursor and go first next time.</p></div>
       {runsMonth && (
         <div className="stat-blocks run-month">
           <div className="lime" title={runsMonth.truncated ? "Only the newest 100 runs are summed; the month has more." : undefined}><strong>{runsMonth.costUsd === undefined ? "unknown" : `${formatUsd(runsMonth.costUsd)}${runsMonth.truncated ? "+" : ""}`}</strong><span>Apify this month</span></div>
@@ -3011,14 +3119,17 @@ function ProfileView({ creators, rankedSignals, runs, runsMonth, runsState }: { 
             const hashtagSweep = run.kind === "hashtag-sweep";
             return (
               <tr key={run.id}>
-                <td><strong>{formatStamp(run.startedAt)}</strong><br /><small className="muted">{hashtagSweep ? "Instagram hashtag sweep" : run.kind}{run.transcriptSignalId ? ` · Reel ${run.transcriptSignalId}` : ""}</small></td>
+                <td><strong>{formatStamp(run.startedAt)}</strong><br /><small className="muted">{hashtagSweep ? "Instagram hashtag sweep" : run.kind === "youtube-search" ? `YouTube-Suchlauf · ${run.queries?.length ?? 0} Begriffe` : run.kind}{run.transcriptSignalId ? ` · Reel ${run.transcriptSignalId}` : ""}</small></td>
                 <td><span className={`status-chip run-${run.status}`}>{run.status === "ok" ? <CheckCircle size={14} weight="fill" /> : <WarningCircle size={14} weight="fill" />} {run.status}</span></td>
                 <td className="hide-sm muted">{formatDuration(run.durationMs)}</td>
                 <td className="right num" title={skipped ? `${skipped} left for the next run by the creator limit` : undefined}>{hashtagSweep ? `${run.hashtagsChecked ?? 0} tags` : <>{run.creatorsChecked}{skipped ? <small className="muted"> +{skipped} left</small> : null}</>}</td>
                 <td className="right num">{run.recordsAdded}</td>
                 <td className="right num">{run.recordsUpdated}</td>
                 <td className="right num" title={`${run.transcriptSignalId ? `Reel ${run.transcriptSignalId} · ` : ""}Added / Silent / Missing / Failed`}>{formatTranscriptCounts(run)}</td>
-                <td className={cost.label === "unknown" ? "right muted" : "right num"} title={cost.title}>{cost.label}</td>
+                <td className={cost.label === "unknown" ? "right muted" : "right num"} title={run.youtubeQuota ? `${cost.title} · YouTube quota: ${run.youtubeQuota.calls.search} search, ${run.youtubeQuota.calls.videos} videos, ${run.youtubeQuota.calls.channels} channels, ${run.youtubeQuota.calls.playlistItems} playlist calls` : cost.title}>
+                  {cost.label}
+                  {run.youtubeQuota && <><br /><small className="muted">{run.youtubeQuota.units} quota</small></>}
+                </td>
                 <td className="hide-sm muted">{run.errors.length === 0 ? "—" : run.errors.map((e) => `${e.handle}: ${e.message}`).join(" · ")}</td>
               </tr>
             );
@@ -3040,11 +3151,11 @@ function AddCreatorDialog({ onClose, onSubmit, state }: { onClose: () => void; o
       <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog-heading"><div><p>Add to daily watch</p><h2 id="dialog-title">Track a public channel</h2></div><button className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button></div>
         <form onSubmit={onSubmit}>
-          <label><span>Channel handle</span><input name="handle" placeholder="@usefulcreator" autoFocus required /><small>The connector resolves the handle and pulls the last 90 days.</small></label>
+          <label><span>Channel handle</span><input name="handle" placeholder="@usefulcreator" autoFocus required /><small>Instagram pulls the last 90 days via Apify. YouTube resolves the @handle, channel link or channel id and measures the last 50 long-form videos.</small></label>
           <label><span>Network</span><select name="network" defaultValue="instagram"><option value="youtube">YouTube</option><option value="instagram">Instagram</option><option value="tiktok">TikTok</option></select></label>
           <label><span>Market</span><select name="market" defaultValue="de"><option value="de">German (core niche)</option><option value="en">English</option></select><small>English-market creators keep their Format Signals in a separate group and yield transcript budget to the core niche.</small></label>
           <label className="check-label"><input type="checkbox" name="owned" /><span>This is my own account<small>Owned accounts are read in Profile and stay out of Discover, Briefing and Format Signals.</small></span></label>
-          <div className="dialog-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit" disabled={state === "loading"}>{state === "loading" ? "Backfilling 90 days via Apify…" : state === "error" ? "Failed, retry" : "Add to daily watch"}<ArrowRight size={15} /></button></div>
+          <div className="dialog-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit" disabled={state === "loading"}>{state === "loading" ? "Backfilling the channel…" : state === "error" ? "Failed, retry" : "Add to daily watch"}<ArrowRight size={15} /></button></div>
         </form>
       </div>
     </div>

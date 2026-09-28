@@ -9,6 +9,7 @@
  */
 
 import type * as briefings from "../briefings.js";
+import type * as candidates from "../candidates.js";
 import type * as creators from "../creators.js";
 import type * as crons from "../crons.js";
 import type * as formatReviews from "../formatReviews.js";
@@ -16,12 +17,15 @@ import type * as hashtagPosts from "../hashtagPosts.js";
 import type * as hashtagSweep from "../hashtagSweep.js";
 import type * as hookRuns from "../hookRuns.js";
 import type * as ideas from "../ideas.js";
+import type * as patterns from "../patterns.js";
 import type * as refresh from "../refresh.js";
 import type * as runs from "../runs.js";
 import type * as scripts from "../scripts.js";
 import type * as signals from "../signals.js";
 import type * as slates from "../slates.js";
+import type * as transcriptAnalyses from "../transcriptAnalyses.js";
 import type * as transcriptDictionary from "../transcriptDictionary.js";
+import type * as youtube from "../youtube.js";
 
 import type {
   ApiFromModules,
@@ -31,6 +35,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   briefings: typeof briefings;
+  candidates: typeof candidates;
   creators: typeof creators;
   crons: typeof crons;
   formatReviews: typeof formatReviews;
@@ -38,12 +43,15 @@ declare const fullApi: ApiFromModules<{
   hashtagSweep: typeof hashtagSweep;
   hookRuns: typeof hookRuns;
   ideas: typeof ideas;
+  patterns: typeof patterns;
   refresh: typeof refresh;
   runs: typeof runs;
   scripts: typeof scripts;
   signals: typeof signals;
   slates: typeof slates;
+  transcriptAnalyses: typeof transcriptAnalyses;
   transcriptDictionary: typeof transcriptDictionary;
+  youtube: typeof youtube;
 }>;
 
 /**

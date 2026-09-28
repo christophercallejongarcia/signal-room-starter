@@ -4,9 +4,20 @@ import { anyApi, type FunctionReference } from "convex/server";
 import type { CollectStorage } from "../../collect.ts";
 import { ConvexError } from "convex/values";
 import { DevelopConflictError, ForbiddenMoveError } from "../../ideas.ts";
-import type { Briefing, Creator, FormatReview, HashtagPost, HookRun, Idea, Run, SaveResult, Script, ScriptPatch, ScriptRunClaimOptions, SettleScriptRun, SignalRecord, Slate, StorageAdapter, TranscriptDictionaryEntry, TranscriptSignalPatch } from "../../contracts";
+import type { Briefing, Creator, FormatReview, HashtagPost, HookRun, Idea, Run, SavePatternComparison, SaveResult, Script, ScriptPatch, ScriptRunClaimOptions, SettleScriptRun, SignalRecord, Slate, StorageAdapter, TranscriptAnalysis, TranscriptDictionaryEntry, TranscriptSignalPatch, SettleTranscriptAnalysis } from "../../contracts";
 import { ScriptRunConflictError } from "../../scripts.ts";
 import { TranscriptConflictError } from "../../transcripts.ts";
+import { CandidateConflictError } from "../../candidates.ts";
+import type { CreatorCandidate, YoutubeSearchTerm, YoutubeVideo } from "../../contracts";
+
+/** Hands a Convex-side candidate conflict back as the lib's own error. */
+function candidateConflict(error: unknown): never {
+  const data = error instanceof ConvexError ? (error.data as { kind?: string; reason?: string; message?: string }) : null;
+  if (data?.kind === "candidate-conflict" && (data.reason === "claimed" || data.reason === "accepted")) {
+    throw new CandidateConflictError(data.reason, data.message ?? "This Kandidat cannot move right now.");
+  }
+  throw error;
+}
 
 /**
  * Whoever can call Convex functions: the HTTP client from the Next server, or an
@@ -18,7 +29,7 @@ export type ConvexCaller = {
   mutation(ref: FunctionReference<"mutation">, args: Record<string, unknown>): Promise<unknown>;
 };
 
-export type ConvexCollectStorage = CollectStorage & Pick<StorageAdapter, "saveBriefing">;
+export type ConvexCollectStorage = CollectStorage & Pick<StorageAdapter, "saveBriefing" | "saveYoutubeVideos">;
 
 export type ConvexHashtagStorage = Pick<StorageAdapter, "saveHashtagPosts" | "saveRun"> & {
   listHashtagPosts(limit?: number): Promise<HashtagPost[]>;
@@ -29,11 +40,16 @@ function isMissingTranscriptDictionaryFunction(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("Could not find public function") && message.includes("transcriptDictionary:");
 }
-
 /** Keeps an older deployment readable until the Scripts table is deployed. */
 function isMissingScriptFunction(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("Could not find public function") && message.includes("scripts:");
+}
+
+function transcriptAnalysisWorkerToken() {
+  const token = process.env.TRANSCRIPT_ANALYSIS_WORKER_TOKEN?.trim();
+  if (!token) throw new Error("TRANSCRIPT_ANALYSIS_WORKER_TOKEN is required for the Convex analysis worker.");
+  return token;
 }
 
 /** The slice a collection pass and the briefing after it touch. Declared once for both callers. */
@@ -62,6 +78,15 @@ export function collectStorageOver(convex: ConvexCaller): ConvexCollectStorage {
     },
     async saveRun(run) {
       await convex.mutation(anyApi.runs.upsert, { run });
+    },
+    async saveYoutubeVideos(videos: YoutubeVideo[]) {
+      const total: SaveResult = { inserted: 0, updated: 0 };
+      for (let i = 0; i < videos.length; i += 100) {
+        const part = (await convex.mutation(anyApi.youtube.saveVideos, { videos: videos.slice(i, i + 100) })) as SaveResult;
+        total.inserted += part.inserted;
+        total.updated += part.updated;
+      }
+      return total;
     },
     async saveBriefing(briefing) {
       await convex.mutation(anyApi.briefings.upsert, { briefing });
@@ -117,6 +142,45 @@ export function createConvexStorage(url: string): StorageAdapter & { upsertCreat
     },
     async patchTranscript(id, patch: TranscriptSignalPatch) {
       return (await client.mutation(anyApi.signals.patchTranscript, { id, patch })) as SignalRecord | null;
+    },
+    async listTranscriptAnalyses(options = {}) {
+      return (await client.query(anyApi.transcriptAnalyses.list, options)) as TranscriptAnalysis[];
+    },
+    async enqueueTranscriptAnalysis(signalId, now) {
+      return (await client.mutation(anyApi.transcriptAnalyses.enqueue, { signalId, now, workerToken: transcriptAnalysisWorkerToken() })) as TranscriptAnalysis | null;
+    },
+    async claimTranscriptAnalysis(now, claimId, analysisId) {
+      return (await client.mutation(anyApi.transcriptAnalyses.claim, { now, claimId, workerToken: transcriptAnalysisWorkerToken(), ...(analysisId ? { analysisId } : {}) })) as TranscriptAnalysis | null;
+    },
+    async settleTranscriptAnalysis(id, claimId, result: SettleTranscriptAnalysis) {
+      return (await client.mutation(anyApi.transcriptAnalyses.settle, {
+        id,
+        workerToken: transcriptAnalysisWorkerToken(),
+        claimId,
+        status: result.status,
+        now: result.now,
+        ...(result.framework === undefined ? {} : { framework: result.framework }),
+        ...(result.frameworkEvidence === undefined ? {} : { frameworkEvidence: result.frameworkEvidence }),
+        ...(result.findings === undefined ? {} : { findings: result.findings }),
+        ...(result.chunks === undefined ? {} : { chunks: result.chunks }),
+        ...(result.textLength === undefined ? {} : { textLength: result.textLength }),
+        ...(result.complete === undefined ? {} : { complete: result.complete }),
+        ...(result.error === undefined ? {} : { error: result.error }),
+      })) as TranscriptAnalysis | null;
+    },
+    async retryTranscriptAnalysis(id, now) {
+      try {
+        return (await client.mutation(anyApi.transcriptAnalyses.retry, { id, now, workerToken: transcriptAnalysisWorkerToken() })) as TranscriptAnalysis | null;
+      } catch (error) {
+        const data = error instanceof ConvexError ? (error.data as { message?: string }) : null;
+        throw new Error(data?.message ?? (error instanceof Error ? error.message : "Transcript analysis retry failed."));
+      }
+    },
+    async listPatternComparisons(limit = 20) {
+      return (await client.query(anyApi.patterns.list, { limit })) as SavePatternComparison[];
+    },
+    async savePatternComparison(result) {
+      return (await client.mutation(anyApi.patterns.save, { ...result, workerToken: transcriptAnalysisWorkerToken() })) as SavePatternComparison;
     },
     async listTranscriptDictionary() {
       try {
@@ -279,6 +343,50 @@ export function createConvexStorage(url: string): StorageAdapter & { upsertCreat
         if (data?.kind === "forbidden-move") throw new ForbiddenMoveError(data.message ?? "That Script move is not allowed.");
         throw error;
       }
+    },
+    async listYoutubeOutliers(query = {}) {
+      return (await client.query(anyApi.youtube.outliers, { ...query })) as YoutubeVideo[];
+    },
+    async listYoutubeSearchTerms() {
+      return (await client.query(anyApi.youtube.listTerms, {})) as YoutubeSearchTerm[];
+    },
+    async saveYoutubeSearchTerm(term) {
+      await client.mutation(anyApi.youtube.saveTerm, { term });
+    },
+    async removeYoutubeSearchTerm(id) {
+      return (await client.mutation(anyApi.youtube.removeTerm, { id })) as boolean;
+    },
+    async listCandidates(options = {}) {
+      return (await client.query(anyApi.candidates.list, { ...options })) as CreatorCandidate[];
+    },
+    async getCandidate(key) {
+      return (await client.query(anyApi.candidates.get, { key })) as CreatorCandidate | null;
+    },
+    async mergeCandidates(candidates) {
+      const total: SaveResult = { inserted: 0, updated: 0 };
+      for (let i = 0; i < candidates.length; i += 50) {
+        const part = (await client.mutation(anyApi.candidates.merge, { candidates: candidates.slice(i, i + 50) })) as SaveResult;
+        total.inserted += part.inserted;
+        total.updated += part.updated;
+      }
+      return total;
+    },
+    async decideCandidate(key, decision, now) {
+      try {
+        return (await client.mutation(anyApi.candidates.decide, { key, decision, now })) as CreatorCandidate | null;
+      } catch (error) {
+        candidateConflict(error);
+      }
+    },
+    async claimCandidate(key, claimId, now) {
+      try {
+        return (await client.mutation(anyApi.candidates.claim, { key, claimId, now })) as CreatorCandidate | null;
+      } catch (error) {
+        candidateConflict(error);
+      }
+    },
+    async settleCandidate(key, claimId, result) {
+      return (await client.mutation(anyApi.candidates.settle, { key, claimId, result })) as CreatorCandidate | null;
     },
   };
 }

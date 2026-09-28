@@ -1,0 +1,137 @@
+/// <reference types="vite/client" />
+import { convexTest } from "convex-test";
+import { expect, test } from "vitest";
+import schema from "./schema";
+import { api, internal } from "./_generated/api";
+
+const modules = import.meta.glob("./**/*.ts");
+
+const signal = {
+  id: "ig-convex-analysis-1",
+  creatorId: "creator-1",
+  title: "Convex Analyse",
+  publishedAt: "2026-09-10T08:00:00.000Z",
+  views: 1000,
+  likes: 10,
+  comments: 2,
+  durationSeconds: 30,
+  thumbnailSeed: "analysis",
+  topic: "testing",
+  format: "reel",
+  transcript: "Hook. Beweis.",
+  transcriptStatus: "ready",
+};
+
+test("Convex queues at the signal write boundary and settles one claimed result", async () => {
+  const t = convexTest(schema, modules);
+  await t.mutation(api.signals.bulkUpsert, { records: [signal] });
+  const first = await t.query(api.transcriptAnalyses.list, { signalId: signal.id });
+  expect(first).toHaveLength(1);
+  expect(await t.query(api.transcriptAnalyses.list, { analysisId: first[0].id, limit: 1 })).toEqual(first);
+  expect(await t.query(api.transcriptAnalyses.list, { analysisId: "analysis-missing", limit: 1 })).toEqual([]);
+  await t.mutation(api.signals.bulkUpsert, { records: [signal] });
+  expect(await t.query(api.transcriptAnalyses.list, { signalId: signal.id })).toHaveLength(1);
+
+  const claimed = await t.mutation(internal.transcriptAnalyses.claimInternal, {
+    now: "2026-09-10T10:00:00.000Z",
+    claimId: "claim-1",
+  });
+  expect(claimed?.status).toBe("running");
+  const settled = await t.mutation(internal.transcriptAnalyses.settleInternal, {
+    id: first[0].id,
+    claimId: "claim-1",
+    status: "complete",
+    now: "2026-09-10T10:01:00.000Z",
+    framework: "none",
+    frameworkEvidence: [],
+    findings: [{ feature: "hook", explanation: "Einstieg", quote: "Hook.", start: 0, end: 5 }],
+    chunks: [{ index: 0, start: 0, end: 13, status: "complete" }],
+    textLength: 13,
+    complete: true,
+  });
+  expect(settled?.status).toBe("complete");
+  expect(settled?.findings[0].quote).toBe("Hook.");
+});
+
+test("Convex atomically reclaims an expired job and rejects the earlier worker", async () => {
+  const t = convexTest(schema, modules);
+  await t.mutation(api.signals.bulkUpsert, { records: [{ ...signal, id: "ig-expired" }] });
+  const [queued] = await t.query(api.transcriptAnalyses.list, { signalId: "ig-expired" });
+  await t.mutation(internal.transcriptAnalyses.claimInternal, { now: "2026-09-10T10:00:00.000Z", claimId: "old-worker" });
+  expect(await t.mutation(internal.transcriptAnalyses.claimInternal, { now: "2026-09-10T10:09:59.999Z", claimId: "early-worker" })).toBeNull();
+  const reclaimed = await t.mutation(internal.transcriptAnalyses.claimInternal, { now: "2026-09-10T10:10:00.000Z", claimId: "new-worker" });
+  expect(reclaimed?.attempts).toBe(2);
+  expect(await t.mutation(internal.transcriptAnalyses.settleInternal, {
+    id: queued.id,
+    claimId: "old-worker",
+    status: "complete",
+    now: "2026-09-10T10:10:01.000Z",
+  })).toBeNull();
+});
+
+test("Convex keeps a late result from replacing a newer working copy", async () => {
+  const t = convexTest(schema, modules);
+  await t.mutation(api.signals.bulkUpsert, { records: [{ ...signal, id: "ig-stale" }] });
+  const [queued] = await t.query(api.transcriptAnalyses.list, { signalId: "ig-stale" });
+  await t.mutation(internal.transcriptAnalyses.claimInternal, { now: "2026-09-10T10:00:00.000Z", claimId: "stale-worker" });
+  await t.mutation(api.signals.patchTranscript, {
+    id: "ig-stale",
+    patch: { transcriptWorkingCopy: "Eine neuere Arbeitsfassung.", transcriptUpdatedAt: "2026-09-10T10:00:01.000Z" },
+  });
+  expect(await t.mutation(internal.transcriptAnalyses.settleInternal, {
+    id: queued.id,
+    claimId: "stale-worker",
+    status: "complete",
+    now: "2026-09-10T10:00:02.000Z",
+  })).toBeNull();
+  const analyses = await t.query(api.transcriptAnalyses.list, { signalId: "ig-stale" });
+  expect(analyses).toHaveLength(2);
+  expect(analyses.find((item) => item.id === queued.id)?.status).toBe("running");
+});
+
+test("Convex claims the selected analysis ahead of an older queued job", async () => {
+  const t = convexTest(schema, modules);
+  await t.mutation(api.signals.bulkUpsert, { records: [
+    { ...signal, id: "ig-older-selected-test" },
+    { ...signal, id: "ig-selected-test", transcript: "Selected Reel." },
+  ] });
+  const [selected] = await t.query(api.transcriptAnalyses.list, { signalId: "ig-selected-test" });
+  const claimed = await t.mutation(internal.transcriptAnalyses.claimInternal, {
+    now: "2026-09-10T10:00:00.000Z",
+    claimId: "selected-worker",
+    analysisId: selected.id,
+  });
+  expect(claimed?.id).toBe(selected.id);
+  const [older] = await t.query(api.transcriptAnalyses.list, { signalId: "ig-older-selected-test" });
+  expect(older.status).toBe("queued");
+});
+
+test("Convex returns the current analysis after a working-copy correction is reverted", async () => {
+  const t = convexTest(schema, modules);
+  const revertedSignal = { ...signal, id: "ig-convex-reverted", transcript: "Original A." };
+  await t.mutation(api.signals.bulkUpsert, { records: [revertedSignal] });
+  const [original] = await t.query(api.transcriptAnalyses.list, { signalId: revertedSignal.id });
+  await t.mutation(api.signals.patchTranscript, {
+    id: revertedSignal.id,
+    patch: { transcriptWorkingCopy: "Korrektur B.", transcriptUpdatedAt: "2026-09-10T10:01:00.000Z" },
+  });
+  await t.mutation(api.signals.patchTranscript, {
+    id: revertedSignal.id,
+    patch: { transcriptWorkingCopy: null, transcriptUpdatedAt: "2026-09-10T10:02:00.000Z" },
+  });
+
+  const current = await t.mutation(internal.transcriptAnalyses.enqueueInternal, {
+    signalId: revertedSignal.id,
+    now: "2026-09-10T10:03:00.000Z",
+  });
+  expect(current?.id).toBe(original.id);
+});
+
+test("public worker mutations fail closed without the deployment secret", async () => {
+  const t = convexTest(schema, modules);
+  await expect(t.mutation(api.transcriptAnalyses.claim, {
+    now: "2026-09-10T10:00:00.000Z",
+    claimId: "unauthorized-worker",
+    workerToken: "wrong",
+  })).rejects.toThrow(/not authorized/i);
+});
