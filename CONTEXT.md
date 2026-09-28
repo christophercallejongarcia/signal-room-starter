@@ -5,7 +5,7 @@ Glossar für Signal Room (Instagram-Reels-Intelligence für Chris' Nische). Wer 
 ## Kernobjekte
 
 **Creator**
-Ein beobachteter Instagram-Account mit `handle`, `audience` (Follower) und `network`; im Code der Typ `Creator`, beim Auflösen über Apify heißt dasselbe Feld noch `followers` in `ResolvedProfile`.
+Ein beobachteter Instagram-Account oder YouTube-Kanal mit `handle`, `audience` (Follower bzw. Abonnenten) und `network`; ein YouTube-Creator hat die id `youtube-<Kanal-ID>`; im Code der Typ `Creator`, beim Auflösen über Apify heißt dasselbe Feld noch `followers` in `ResolvedProfile`.
 Nicht: "Channel", "Account", "Profil" (Profil meint nur den Profile-Tab der App).
 
 **Signal**
@@ -98,7 +98,35 @@ Der Faktor `plays / median(plays)` über den gehaltenen Korpus desselben Creator
 Nicht: "Baseline-Ratio", "Creator-Relative", "Median-Score".
 
 **Schwelle**
-Der Faktor, ab dem ein Signal als Outlier gilt und Badge, Zähler und Outlier-Filter greifen. In Discover wählbar (1.5x, 2x, 3x, 5x), Standard `DEFAULT_OUTLIER_THRESHOLD` = 2 in `lib/discover-filter.ts`, re-exportiert als `OUTLIER_THRESHOLD` in `lib/config.ts`.
+Der Faktor, ab dem ein Signal als Outlier gilt und Badge, Zähler und Outlier-Filter greifen. In Discover wählbar (1.5x, 2x, 3x, 5x), je Netzwerk getrennt gemerkt. Standard für Instagram `DEFAULT_OUTLIER_THRESHOLD` = 2 in `lib/discover-filter.ts`, re-exportiert als `OUTLIER_THRESHOLD` in `lib/config.ts`; für YouTube `YOUTUBE_DEFAULT_THRESHOLD` = 3.
+
+**YouTube-Outlier**
+Bei YouTube ist der Outlier `views / Kanal-Median` (ADR-0007, `lib/adapters/scoring/youtube-outlier.ts`); 3.0 heißt dreimal so viele Aufrufe wie ein übliches Longform-Video des Kanals. Ein Short hat den Faktor 0. Daneben stehen Aufrufe pro Abo und Aufrufe pro Tag, beide nur als Anzeige.
+Nicht: "Performance-Score", "Viralität".
+
+**Kanal-Median**
+Der Median der Aufrufe der letzten 30 Longform-Videos desselben YouTube-Kanals (`youtubeBaseline`). Unter 5 Longform-Videos gibt es keinen, dann ist der Faktor 0.
+Nicht: "Channel-Relative" (das ist der Instagram-Median über den gehaltenen Korpus), "Durchschnitt".
+
+**Longform**
+Ein YouTube-Video, das kein Short ist, gespeichert mit `format: "long"`. Was in YouTubes Playlist `UULF<Kanal>` steht, ist Longform, auch wenn es kürzer als drei Minuten ist; sonst entscheidet die Dauer (über 180 s) und `#shorts` im Titel. Short heißt `format: "short"` und zählt nirgends.
+Nicht: "Video" allein, "Long-Video".
+
+**Suchlauf**
+Ein protokollierter Run der Art `youtube-search` (`runYoutubeSearch` in `lib/youtube-search.ts`, `POST /api/youtube/search`): Suchbegriff, dann Videos, dann Kanal-Median je gefundenem Kanal, dann Outlier. Funde landen in `youtubeVideos`, Kanäle mit einem Fund ab 3x und 5.000 Aufrufen als Kandidaten. Der Run trägt `queries` und `youtubeQuota`.
+Nicht: "Scan", "Crawl", "Discovery-Run".
+
+**Suchbegriff**
+Ein Eintrag der Tabelle `youtubeSearchTerms` mit Begriff, Markt (`de`/`en`) und Thema (`claude`, `agents`, `ai-os`, `automation`). Bis Chris die Liste ändert, gelten die Start-Begriffe aus `lib/youtube-terms.ts`; die erste Änderung schreibt sie in den Store.
+Nicht: "Keyword", "Hashtag" (Hashtag gehört zum Instagram-Hashtag-Sweep).
+
+**Kandidat**
+Ein Creator, den Signal Room für die Watchlist vorschlägt, Tabelle `creatorCandidates` (P4-05). Schlüssel `<network>:<id>`, bei YouTube die Kanal-ID. Trägt Begründung, Quellen, Belege (bis zu 5 Outlier-Videos), Datenstand und die Entscheidung `proposed`, `selected`, `accepted`, `rejected` oder `deferred`. Ein neuer Fund führt Quellen und neuere Zahlen zusammen, ändert aber nie die Entscheidung. Aufnehmen (P4-09, `POST /api/candidates/accept`) beansprucht den Kandidaten atomar, löst den Kanal auf, fährt den Backfill und setzt `accepted` mit `creatorId`; ein Fehler lässt ihn `selected` mit `acceptError`, der nächste Klick setzt dort fort. Ein bereits getrackter Creator wird ohne Backfill verbunden.
+Nicht: "Lead", "Vorschlag", "Empfehlung".
+
+**Quota**
+Das Tagesbudget der YouTube Data API: 10.000 Einheiten, Reset um Mitternacht Pacific. `search.list` zählt 100, jeder andere Aufruf 1. Jeder YouTube-Run speichert `youtubeQuota` (Einheiten und Aufrufe je Methode); der Profile-Tab zeigt sie unter den Kosten.
+Nicht: "Kosten" (die meinen Apify-Dollar), "Rate-Limit".
 Nicht: "Cutoff", "Limit", "Grenzwert".
 
 ## Formate und Inhalte

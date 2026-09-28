@@ -497,6 +497,8 @@ export type RefreshResult = {
   briefingId?: string;
   /** id of the Slate the refresh left or found for the day, absent when the run failed. */
   slateId?: string;
+  /** YouTube Data API quota the refresh used; absent without a YouTube call. */
+  youtubeQuota?: YoutubeQuota;
 };
 
 /** One outlier reel as handed to the Strategy-Provider. Source text, never instructions. */

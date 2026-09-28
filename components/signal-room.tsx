@@ -1147,6 +1147,22 @@ function DiscoverView({
   const saved = countSaved(rankedSignals, creators, filters);
   const filtered = sortDiscover(filterDiscover(rankedSignals, creators, { ...filters, view }), sort);
   const feedKey = JSON.stringify([network, view, published, channel, sort, threshold, perPage]);
+  const [ytRefresh, setYtRefresh] = useState<{ running: boolean; note: string }>({ running: false, note: "" });
+
+  /** YouTube only: fresh numbers for the watchlist channels, logged as a refresh run with its quota. */
+  async function refreshYoutube() {
+    setYtRefresh({ running: true, note: "" });
+    try {
+      const response = await fetch("/api/refresh", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ network: "youtube" }) });
+      const result = (await response.json().catch(() => ({}))) as RefreshResult & { error?: string };
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      const failed = result.errors?.length ?? 0;
+      setYtRefresh({ running: false, note: `${result.creatorsChecked} Kanäle gemessen, ${result.recordsAdded} neu, ${result.recordsUpdated} aktualisiert${failed ? `, ${failed} Fehler` : ""}. Quota: ${result.youtubeQuota?.units ?? 0} Einheiten.` });
+      onWatchlistChanged();
+    } catch (error) {
+      setYtRefresh({ running: false, note: error instanceof Error ? error.message : "Refresh fehlgeschlagen." });
+    }
+  }
   const isIg = network === "instagram";
 
   return (
@@ -1190,8 +1206,17 @@ function DiscoverView({
 
       {!isIg && (
         <div className="section-head">
-          <div><p className="kicker">Watchlist</p><h2>Longform der YouTube-Kanäle in der Watchlist</h2></div>
-          <p className="note">Jeder Refresh misst die letzten 50 Longform-Videos jedes Kanals neu, weil Longform wochenlang Aufrufe sammelt.</p>
+          <div>
+            <p className="kicker">Watchlist</p>
+            <h2>Longform der YouTube-Kanäle in der Watchlist</h2>
+            <p className="yt-refresh-line" role="status">
+              <button className="ghost-button" type="button" onClick={refreshYoutube} disabled={ytRefresh.running}>
+                <ArrowsClockwise className={ytRefresh.running ? "spin" : ""} size={13} /> {ytRefresh.running ? "Frische auf…" : "YouTube-Watchlist auffrischen"}
+              </button>
+              {ytRefresh.note && <span>{ytRefresh.note}</span>}
+            </p>
+          </div>
+          <p className="note">Jeder Refresh misst die letzten 50 Longform-Videos jedes Kanals neu, weil Longform wochenlang Aufrufe sammelt. Kostet Quota (rund 3 Einheiten pro Kanal), kein Apify.</p>
         </div>
       )}
 

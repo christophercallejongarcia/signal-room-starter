@@ -13,6 +13,7 @@ import { youtubeBaseline, youtubeFormat, youtubeMetrics, type YoutubeBaseline } 
 
 const API_BASE = "https://www.googleapis.com/youtube/v3";
 const PAGE_SIZE = 50;
+const VIDEO_CONCURRENCY = 4;
 const DESCRIPTION_MAX = 500;
 const ERROR_MAX = 300;
 
@@ -345,15 +346,15 @@ export async function fetchChannels(ids: string[], client: YoutubeClient): Promi
 
 /** Many videos by id, 50 per call. Unknown, private or deleted ids are simply absent. */
 export async function fetchVideos(ids: string[], client: YoutubeClient): Promise<MeasuredVideo[]> {
-  const videos: MeasuredVideo[] = [];
-  for (const part of chunks([...new Set(ids)])) {
-    const body = await client.get<ApiList<ApiVideo>>("videos", "videos", { part: "snippet,statistics,contentDetails", id: part.join(","), maxResults: PAGE_SIZE });
-    for (const item of body.items ?? []) {
-      const video = mapVideo(item);
-      if (video) videos.push(video);
-    }
+  const parts = chunks([...new Set(ids)]);
+  const answers: ApiVideo[][] = [];
+  // A few 50-id pages at a time; order is kept by index.
+  for (let i = 0; i < parts.length; i += VIDEO_CONCURRENCY) {
+    const batch = await Promise.all(parts.slice(i, i + VIDEO_CONCURRENCY).map((part) =>
+      client.get<ApiList<ApiVideo>>("videos", "videos", { part: "snippet,statistics,contentDetails", id: part.join(","), maxResults: PAGE_SIZE })));
+    answers.push(...batch.map((body) => body.items ?? []));
   }
-  return videos;
+  return answers.flat().map(mapVideo).filter((video): video is MeasuredVideo => Boolean(video));
 }
 
 /**

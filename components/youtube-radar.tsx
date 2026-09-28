@@ -37,6 +37,9 @@ const VIEWS: { id: CandidateView; label: string; decisions: CandidateDecision[] 
   { id: "accepted", label: "In der Watchlist", decisions: ["accepted"] },
 ];
 
+/** Rows and cards revealed per click, so the radar never pushes the watchlist feed off the page. */
+const PAGE = 12;
+
 /** P4-09: the watchlist aims for 20 to 30 YouTube channels; a bigger list is never trimmed. */
 const WATCHLIST_TARGET = "20 bis 30";
 
@@ -44,7 +47,7 @@ function quotaLine(run: Pick<Run, "youtubeQuota"> | null | undefined, daily: num
   const quota = run?.youtubeQuota;
   if (!quota) return "Quota: noch kein Lauf";
   const share = ((quota.units / daily) * 100).toFixed(1).replace(".", ",");
-  return `Quota: ${formatNumber(quota.units)} Einheiten (${share} % des Tagesbudgets), davon ${quota.calls.search} Suchaufrufe`;
+  return `Quota: ${quota.units.toLocaleString("de-DE")} Einheiten (${share} % des Tagesbudgets), davon ${quota.calls.search} Suchaufrufe`;
 }
 
 async function readJson<T>(response: Response): Promise<T & { error?: string }> {
@@ -78,6 +81,8 @@ export function YoutubeRadar({
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [view, setView] = useState<CandidateView>("open");
   const [termError, setTermError] = useState("");
+  const [candidateLimit, setCandidateLimit] = useState(PAGE);
+  const [outlierLimit, setOutlierLimit] = useState(PAGE);
 
   async function loadMeta() {
     try {
@@ -217,7 +222,7 @@ export function YoutubeRadar({
           </div>
           <button className="primary-button" type="button" onClick={runSearch} disabled={search.running || !meta?.configured}>
             {search.running ? <ArrowClockwise className="spin" size={15} /> : <MagnifyingGlass size={15} />}
-            {search.running ? "Suche läuft, bis zu einer Minute" : "Suchlauf starten"}
+            {search.running ? "Suche läuft, etwa eine Minute" : "Suchlauf starten"}
           </button>
         </div>
 
@@ -230,7 +235,7 @@ export function YoutubeRadar({
               Letzter Suchlauf {timeAgo(lastRun.startedAt, nowMs)} · {lastRun.status} · {lastRun.creatorsChecked} Kanäle gemessen · {quotaLine(lastRun, meta.dailyQuota)}
             </span>
           )}
-          {meta && !lastRun && meta.configured && <span>Noch kein Suchlauf. Er kostet mit allen Begriffen rund 1.300 von {formatNumber(meta.dailyQuota)} Quota-Einheiten am Tag.</span>}
+          {meta && !lastRun && meta.configured && <span>Noch kein Suchlauf. Mit den zehn Start-Begriffen kostet er rund 1.300 von {formatNumber(meta.dailyQuota)} Quota-Einheiten am Tag.</span>}
         </div>
 
         {search.answer && (
@@ -278,7 +283,7 @@ export function YoutubeRadar({
       </div>
       <div className="pill-group yt-views" role="tablist" aria-label="Kandidaten-Status">
         {VIEWS.map((item) => (
-          <button key={item.id} type="button" className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>{item.label} {counts[item.id]}</button>
+          <button key={item.id} type="button" className={view === item.id ? "active" : ""} onClick={() => { setView(item.id); setCandidateLimit(PAGE); }}>{item.label} {counts[item.id]}</button>
         ))}
       </div>
       <table className="desk-table yt-candidates">
@@ -289,7 +294,7 @@ export function YoutubeRadar({
           {candidatePhase === "ready" && shown.length === 0 && (
             <tr><td colSpan={4}><div className="empty-state">{view === "open" ? "Keine offenen Kandidaten. Ein Suchlauf schlägt Kanäle mit Outliern vor." : "Hier liegt nichts."}</div></td></tr>
           )}
-          {shown.map((candidate) => {
+          {shown.slice(0, candidateLimit).map((candidate) => {
             const busy = pending === candidate.key;
             const error = rowErrors[candidate.key] || candidate.acceptError;
             return (
@@ -343,6 +348,11 @@ export function YoutubeRadar({
           })}
         </tbody>
       </table>
+      {shown.length > candidateLimit && (
+        <div className="feed-pagination">
+          <button className="ghost-button" type="button" onClick={() => setCandidateLimit((n) => n + PAGE)}>Weitere {Math.min(PAGE, shown.length - candidateLimit)} von {shown.length - candidateLimit} Kandidaten zeigen</button>
+        </div>
+      )}
 
       <div className="section-head">
         <div><p className="kicker">Outlier aus Suche und Watchlist</p><h2>Videos ab {threshold}x Kanal-Median, letzte 90 Tage</h2></div>
@@ -353,7 +363,7 @@ export function YoutubeRadar({
       {outlierPhase === "ready" && outliers.length === 0 && <div className="empty-state">Noch keine Outlier ab {threshold}x. Starte einen Suchlauf oder senke die Schwelle.</div>}
       {outliers.length > 0 && (
         <div className="signal-grid cols-4">
-          {outliers.map((video) => (
+          {outliers.slice(0, outlierLimit).map((video) => (
             <article className="signal-card" key={video.id}>
               <div className="signal-media">
                 {video.thumbnailUrl ? <img src={video.thumbnailUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : null}
@@ -386,6 +396,11 @@ export function YoutubeRadar({
               </div>
             </article>
           ))}
+        </div>
+      )}
+      {outliers.length > outlierLimit && (
+        <div className="feed-pagination">
+          <button className="ghost-button" type="button" onClick={() => setOutlierLimit((n) => n + PAGE)}>Weitere {Math.min(PAGE, outliers.length - outlierLimit)} von {outliers.length - outlierLimit} Outliern zeigen</button>
         </div>
       )}
     </section>

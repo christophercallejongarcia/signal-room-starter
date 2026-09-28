@@ -132,6 +132,11 @@ export const YOUTUBE_REFRESH_CHANNEL_LIMIT = positiveEnv("YOUTUBE_REFRESH_CHANNE
  */
 export const YOUTUBE_QUOTA_COST = { search: 100, videos: 1, channels: 1, playlistItems: 1 } as const;
 export const YOUTUBE_DAILY_QUOTA = 10_000;
+/**
+ * A find makes its channel a Kandidat only with at least this many views: a tiny
+ * channel with a median of 40 views turns 1,500 views into a meaningless 38x.
+ */
+export const YOUTUBE_CANDIDATE_MIN_VIEWS = positiveEnv("YOUTUBE_CANDIDATE_MIN_VIEWS", 5_000);
 /** Outlier videos kept as evidence on one Kandidat. */
 export const CANDIDATE_EVIDENCE_LIMIT = 5;
 /** Sources kept on one Kandidat; the oldest fall off. */

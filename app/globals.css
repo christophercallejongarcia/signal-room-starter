@@ -1602,8 +1602,22 @@ main {
 .yt-evidence b { position: absolute; right: 3px; bottom: 3px; padding: 1px 4px; border-radius: 3px; background: rgba(11,13,12,.85); color: var(--accent); font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; }
 .yt-candidates .controls .primary-button { padding: 7px 12px; font-size: 12px; white-space: nowrap; }
 
+.yt-radar, .yt-radar > * { min-width: 0; }
+.yt-radar .panel-head { flex-wrap: wrap; }
+
 @media (max-width: 760px) {
+  .yt-radar .panel-head { flex-direction: column; padding: 16px; }
+  .yt-radar .section-head { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .yt-radar .section-head p.note { max-width: none; text-align: left; }
   .yt-topic { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .yt-status, .yt-terms { padding-left: 16px; padding-right: 16px; }
+  /* The Kandidaten table reads as one card per channel on a phone. */
+  .yt-candidates, .yt-candidates tbody, .yt-candidates tr, .yt-candidates td { display: block; width: 100%; }
+  .yt-candidates thead { display: none; }
+  .yt-candidates tr { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .yt-candidates td { padding: 4px 0; border: 0; }
+  .yt-candidates td.right { text-align: left; }
   .yt-candidates .controls { flex-wrap: wrap; justify-content: flex-start; }
+  .yt-radar .signal-grid { grid-template-columns: minmax(0, 1fr); }
 }
+.yt-refresh-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 10px 0 0; color: var(--muted); font-size: 11px; }

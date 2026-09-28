@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { CreatorCandidate, Run, RunError, StorageAdapter, YoutubeQuota, YoutubeSearchTerm, YoutubeTopic, YoutubeVideo } from "./contracts";
 import {
   YOUTUBE_BASELINE_VIDEOS,
+  YOUTUBE_CANDIDATE_MIN_VIEWS,
   YOUTUBE_DEFAULT_THRESHOLD,
   YOUTUBE_SEARCH_CHANNEL_LIMIT,
   YOUTUBE_SEARCH_RESULTS_PER_TERM,
@@ -65,6 +66,7 @@ export type YoutubeSearchResult = {
 
 type Find = { video: MeasuredVideo; queries: Set<string>; topics: Set<YoutubeTopic>; market: "de" | "en" };
 
+const PLAYLIST_CONCURRENCY = 8;
 const compact = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 });
 
 function describeCandidate(outliers: YoutubeVideo[], baseline: YoutubeBaseline, threshold: number) {
@@ -76,16 +78,17 @@ function describeCandidate(outliers: YoutubeVideo[], baseline: YoutubeBaseline, 
 
 /**
  * Kandidaten from the finds of one Suchlauf: every channel with at least one find
- * at or above the factor that is not already in the watchlist.
+ * at or above the factor and YOUTUBE_CANDIDATE_MIN_VIEWS that is not already in the watchlist.
  */
 export function candidatesFromFinds(
   finds: YoutubeVideo[],
   channels: Map<string, ResolvedChannel & { baseline: YoutubeBaseline }>,
-  context: { tracked: Set<string>; threshold: number; runId: string; now: string },
+  context: { tracked: Set<string>; threshold: number; runId: string; now: string; minViews?: number },
 ): CreatorCandidate[] {
+  const minViews = context.minViews ?? YOUTUBE_CANDIDATE_MIN_VIEWS;
   const byChannel = new Map<string, YoutubeVideo[]>();
   for (const video of finds) {
-    if (video.factor < context.threshold || context.tracked.has(youtubeCreatorId(video.channelId))) continue;
+    if (video.factor < context.threshold || video.views < minViews || context.tracked.has(youtubeCreatorId(video.channelId))) continue;
     byChannel.set(video.channelId, [...(byChannel.get(video.channelId) ?? []), video]);
   }
   const candidates: CreatorCandidate[] = [];
@@ -209,16 +212,20 @@ export async function runYoutubeSearch(options: { termIds?: string[] }, override
       fail("channels", "channels.list", error);
     }
   }
+  // One playlist page per channel, a few at a time: a full run measures 150 channels.
   const pages: RecentUploads[] = [];
-  for (const channel of channels.values()) {
-    if (quotaHit) break;
-    try {
-      pages.push(await recentUploads(channel, client, YOUTUBE_BASELINE_VIDEOS + 10));
-    } catch (error) {
-      quotaHit = error instanceof YoutubeQuotaError;
-      fail(youtubeCreatorId(channel.channelId), channel.handle, error);
+  const queue = [...channels.values()];
+  const worker = async () => {
+    for (let channel = queue.shift(); channel && !quotaHit; channel = queue.shift()) {
+      try {
+        pages.push(await recentUploads(channel, client, YOUTUBE_BASELINE_VIDEOS + 10));
+      } catch (error) {
+        if (error instanceof YoutubeQuotaError) quotaHit = true;
+        fail(youtubeCreatorId(channel.channelId), channel.handle, error);
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: PLAYLIST_CONCURRENCY }, worker));
   const known = new Map(found.map((video) => [video.videoId, video]));
   const missing = pages.flatMap((page) => page.items.map((item) => item.videoId)).filter((id) => !known.has(id));
   if (!quotaHit && missing.length) {

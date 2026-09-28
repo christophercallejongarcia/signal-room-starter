@@ -70,6 +70,12 @@ test("a Suchlauf measures each found channel and turns strong finds into Kandida
   assert.equal(storage.videos.get("yt-trkHIT00001").factor, 9);
 
   assert.deepEqual([...storage.candidates.keys()], [`youtube:${HOT}`], "tracked and thin channels are no Kandidaten");
+  const tiny = channel("UCtinychannel00000000000", { now: NOW, views: 40, extra: [{ id: "tinyHIT0001", channelId: "UCtinychannel00000000000", publishedAt: iso(NOW, 1), duration: "PT9M", views: 1_500 }] });
+  const tinyWorld = { channels: [tiny], search: { "Claude Code": ["tinyHIT0001"] } };
+  const tinyStorage = memoryStorage();
+  await runYoutubeSearch({ termIds: ["en:claude-code"] }, { storage: tinyStorage, client: () => createYoutubeClient({ apiKey: "k", fetch: fakeYoutube(tinyWorld).fetch }), now: () => NOW });
+  assert.equal(tinyStorage.videos.get("yt-tinyHIT0001").factor, 37.5, "the factor is still measured and shown");
+  assert.equal(tinyStorage.candidates.size, 0, "1,500 views are below the Kandidat floor");
   const candidate = storage.candidates.get(`youtube:${HOT}`);
   assert.equal(candidate.decision, "proposed");
   assert.equal(candidate.bestFactor, 10);

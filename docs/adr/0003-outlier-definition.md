@@ -20,4 +20,4 @@ Die Standard-Schwelle ist 2 (`DEFAULT_OUTLIER_THRESHOLD` in `lib/discover-filter
 - Jede Zahl in der UI ist mit einem Satz erklärbar. `describeOutlier` liefert diesen Satz.
 - Follower-Zahl ist Pflicht; ohne `audience > 0` ist der Outlier 0. Follower werden bisher nur beim Add gesetzt; ohne den geplanten wöchentlichen Refresh driftet der Faktor bei wachsenden Accounts.
 - Der Median hängt vom gehaltenen Korpus ab (90 Tage, max. 150 Beiträge). Kleiner Korpus, schwacher Median.
-- Der Demo-Scorer bleibt für den YouTube-Pfad und die Demo-Daten erhalten, wird aber nicht weiterentwickelt.
+- Der Demo-Scorer bleibt für die Demo-Daten erhalten, wird aber nicht weiterentwickelt. YouTube hat seit 2026-09-28 eine eigene Definition, siehe ADR-0007.

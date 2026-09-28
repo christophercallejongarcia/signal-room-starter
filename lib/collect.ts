@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Creator, CoverCacheResult, RefreshResult, Run, RunError, RunUsage, SignalRecord, TranscriptCount, TranscriptSignalPatch, YoutubeQuota, YoutubeVideo } from "./contracts";
+import type { Creator, Network, CoverCacheResult, RefreshResult, Run, RunError, RunUsage, SignalRecord, TranscriptCount, TranscriptSignalPatch, YoutubeQuota, YoutubeVideo } from "./contracts";
 import { collectForCreator, type CollectResult } from "./adapters/sources/apify-instagram.ts";
 import { addQuota, collectForChannel, youtubeApiKey } from "./adapters/sources/youtube-data-api.ts";
 import { transcribeReels, type Transcriber } from "./adapters/sources/apify-transcripts.ts";
@@ -46,6 +46,8 @@ export type CollectDeps = {
   youtubeLimit: number;
   /** False without YOUTUBE_API_KEY: YouTube channels are left out of the refresh instead of failing each. */
   youtubeEnabled: boolean;
+  /** Networks this refresh covers. A YouTube-only refresh costs quota, never Apify money. */
+  networks: Network[];
 };
 
 function defaultDeps(overrides: Partial<CollectDeps>): CollectDeps {
@@ -60,6 +62,7 @@ function defaultDeps(overrides: Partial<CollectDeps>): CollectDeps {
     transcriptLimit: TRANSCRIPT_LIMIT_PER_RUN,
     youtubeLimit: YOUTUBE_REFRESH_CHANNEL_LIMIT,
     youtubeEnabled: Boolean(youtubeApiKey()),
+    networks: ["instagram", "youtube"],
     ...overrides,
   };
 }
@@ -283,8 +286,8 @@ export async function runRefresh(overrides: Partial<CollectDeps> = {}): Promise<
   const deps = defaultDeps(overrides);
   const startedAt = deps.now();
   const tracked = await deps.storage.listCreators();
-  const instagram = tracked.filter((c) => c.network === "instagram");
-  const youtube = tracked.filter((c) => c.network === "youtube");
+  const instagram = deps.networks.includes("instagram") ? tracked.filter((c) => c.network === "instagram") : [];
+  const youtube = deps.networks.includes("youtube") ? tracked.filter((c) => c.network === "youtube") : [];
   if (youtube.length && !deps.youtubeEnabled) {
     console.log(`Refresh leaves ${youtube.length} YouTube channel(s) out: YOUTUBE_API_KEY is not set here.`);
   }
@@ -332,7 +335,9 @@ export async function runRefresh(overrides: Partial<CollectDeps> = {}): Promise<
 
   // Second pass over the stored corpus: a cover that failed on an earlier run
   // is retried as long as its CDN link still resolves. Already cached files are skipped.
-  const catchUp = await deps.cacheCovers(await deps.storage.listSignals());
+  // A network-scoped refresh only catches up the covers of its own networks.
+  const covered = new Set([...instagram, ...youtube].map((creator) => creator.id));
+  const catchUp = await deps.cacheCovers((await deps.storage.listSignals()).filter((signal) => covered.has(signal.creatorId)));
   covers = { cached: covers.cached + catchUp.cached, skipped: catchUp.skipped, failed: catchUp.failed };
 
   const finishedAt = deps.now();
@@ -364,5 +369,6 @@ export async function runRefresh(overrides: Partial<CollectDeps> = {}): Promise<
     covers,
     errors: errors.map((e) => `${e.handle}: ${e.message}`),
     runId: run.id,
+    ...(youtubeQuota ? { youtubeQuota } : {}),
   };
 }
