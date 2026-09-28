@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { Creator, CreatorCandidate, StorageAdapter } from "./contracts";
 import { CandidateConflictError } from "./candidates.ts";
-import { runBackfill, type CollectDeps, type CollectStep } from "./collect.ts";
-import { createYoutubeClient, resolveChannel, youtubeCreatorId } from "./adapters/sources/youtube-data-api.ts";
+import { logFailedBackfill, runBackfill, type CollectDeps, type CollectStep } from "./collect.ts";
+import { createYoutubeClient, resolveChannel, youtubeCreatorId, type YoutubeClient } from "./adapters/sources/youtube-data-api.ts";
 
 const ACCENTS = ["#b9ff5c", "#ff6546", "#5cc8ff", "#ffd75c", "#c77dff"];
 
@@ -14,6 +14,8 @@ export type IntakeDeps = {
   /** Builds the watchlist creator from the Kandidat with fresh channel numbers. */
   resolve: (candidate: CreatorCandidate) => Promise<Creator>;
   backfill: (creator: Creator) => Promise<CollectStep>;
+  /** Records an intake that failed before the backfill logged its own run. */
+  logFailure?: (candidate: CreatorCandidate, error: unknown) => Promise<void>;
 };
 
 export type IntakeResult = {
@@ -24,8 +26,8 @@ export type IntakeResult = {
   recordsAdded: number;
 };
 
-async function resolveYoutube(candidate: CreatorCandidate): Promise<Creator> {
-  const channel = await resolveChannel(candidate.externalId, createYoutubeClient());
+async function resolveYoutube(candidate: CreatorCandidate, client: YoutubeClient): Promise<Creator> {
+  const channel = await resolveChannel(candidate.externalId, client);
   return {
     id: youtubeCreatorId(channel.channelId),
     name: channel.name,
@@ -46,15 +48,22 @@ export function creatorIdFor(candidate: CreatorCandidate) {
   return `${candidate.network}-${candidate.externalId.replace(/^@/, "").toLowerCase()}`;
 }
 
+/**
+ * One intake, one YouTube client: resolving the channel and the backfill share
+ * its quota ledger, so the logged run carries every call the click caused.
+ */
 export function defaultIntakeDeps(storage: IntakeStorage & CollectDeps["storage"]): IntakeDeps {
+  let youtube: YoutubeClient | undefined;
+  const client = () => (youtube ??= createYoutubeClient());
   return {
     storage,
     now: () => new Date(),
     async resolve(candidate) {
       if (candidate.network !== "youtube") throw new Error(`Watchlist intake for ${candidate.network} Kandidaten is not built yet.`);
-      return resolveYoutube(candidate);
+      return resolveYoutube(candidate, client());
     },
-    backfill: (creator) => runBackfill(creator, { storage }),
+    backfill: (creator) => runBackfill(creator, { storage }, creator.network === "youtube" ? { youtube: client() } : {}),
+    logFailure: (candidate, error) => logFailedBackfill(storage, { id: creatorIdFor(candidate), handle: candidate.handle, network: candidate.network }, error, youtube),
   };
 }
 
@@ -86,7 +95,13 @@ export async function acceptCandidate(key: string, deps: IntakeDeps): Promise<In
     let creator = tracked;
     let recordsAdded = 0;
     if (!creator) {
-      creator = await deps.resolve(claimed);
+      try {
+        creator = await deps.resolve(claimed);
+      } catch (error) {
+        // The backfill never ran, so no run carries the calls resolving made.
+        await deps.logFailure?.(claimed, error).catch(() => undefined);
+        throw error;
+      }
       recordsAdded = (await deps.backfill(creator)).recordsAdded;
     }
     const settled = await deps.storage.settleCandidate(key, claimId, { ok: true, creatorId: creator.id, now: deps.now().toISOString() });

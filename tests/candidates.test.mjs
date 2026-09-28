@@ -133,3 +133,18 @@ test("intake: a failure leaves the Kandidat selected with its reason; an already
   assert.equal(linked.candidate.creatorId, "youtube-UCtracked");
   assert.equal(called, false);
 });
+
+test("intake: a failed resolve is logged with its calls, because no backfill run exists to carry them", async () => {
+  const row = candidate();
+  const storage = intakeStorage([row]);
+  const logged = [];
+  await assert.rejects(acceptCandidate(row.key, {
+    storage,
+    now: () => new Date(T0),
+    resolve: async () => { throw new Error("YouTube channel UChot not found"); },
+    backfill: async () => { throw new Error("must not run"); },
+    logFailure: async (c, error) => { logged.push([c.key, error.message]); },
+  }), /not found/);
+  assert.deepEqual(logged, [[row.key, "YouTube channel UChot not found"]]);
+  assert.equal(storage.rows.get(row.key).decision, "selected");
+});

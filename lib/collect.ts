@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Creator, Network, CoverCacheResult, RefreshResult, Run, RunError, RunUsage, SignalRecord, TranscriptCount, TranscriptSignalPatch, YoutubeQuota, YoutubeVideo } from "./contracts";
 import { collectForCreator, type CollectResult } from "./adapters/sources/apify-instagram.ts";
-import { addQuota, collectForChannel, youtubeApiKey } from "./adapters/sources/youtube-data-api.ts";
+import { collectForChannel, createYoutubeClient, youtubeApiKey, YoutubeQuotaError, type YoutubeClient } from "./adapters/sources/youtube-data-api.ts";
 import { transcribeReels, type Transcriber } from "./adapters/sources/apify-transcripts.ts";
 import { getStorage, type Storage } from "./adapters/storage/index.ts";
 import { cacheCovers } from "./adapters/storage/cover-cache.ts";
@@ -21,19 +21,26 @@ export type CollectStorage = Pick<Storage, "listCreators" | "upsertCreator" | "l
 export type NetworkCollectResult = CollectResult & {
   creatorPatch?: Partial<Pick<Creator, "audience" | "name" | "avatarUrl" | "url">>;
   youtubeVideos?: YoutubeVideo[];
-  youtubeQuota?: YoutubeQuota;
 };
 
+/**
+ * What one pass hands every connector call. The YouTube client is the pass's
+ * quota ledger: one per run, so failed and preceding calls count too.
+ */
+export type CollectContext = { youtube?: YoutubeClient };
+
 /** The Netzwerk-Weiche: each creator goes to the connector of its network. */
-export async function collectForNetwork(creator: Creator): Promise<NetworkCollectResult> {
+export async function collectForNetwork(creator: Creator, context: CollectContext = {}): Promise<NetworkCollectResult> {
   if (creator.network === "instagram") return collectForCreator(creator);
-  if (creator.network === "youtube") return collectForChannel(creator);
+  if (creator.network === "youtube") return collectForChannel(creator, context.youtube ?? createYoutubeClient());
   throw new Error(`Network ${creator.network} has no connector yet`);
 }
 
 export type CollectDeps = {
   storage: CollectStorage;
-  collect: (creator: Creator) => Promise<NetworkCollectResult>;
+  collect: (creator: Creator, context?: CollectContext) => Promise<NetworkCollectResult>;
+  /** Opens the YouTube client, and with it the quota ledger, of one pass. */
+  youtubeClient: () => YoutubeClient;
   cacheCovers: (records: SignalRecord[]) => Promise<CoverCacheResult>;
   now: () => Date;
   /** Creators one Delta-Refresh may touch. */
@@ -62,12 +69,18 @@ function defaultDeps(overrides: Partial<CollectDeps>): CollectDeps {
     transcriptLimit: TRANSCRIPT_LIMIT_PER_RUN,
     youtubeLimit: YOUTUBE_REFRESH_CHANNEL_LIMIT,
     youtubeEnabled: Boolean(youtubeApiKey()),
+    youtubeClient: () => createYoutubeClient(),
     networks: ["instagram", "youtube"],
     ...overrides,
   };
 }
 
 export type CollectStep = { recordsAdded: number; recordsUpdated: number; covers: CoverCacheResult; usage: RunUsage; youtubeQuota?: YoutubeQuota };
+
+/** The ledger's figures, or none when the pass never opened a YouTube client. */
+function ledger(client: YoutubeClient | undefined): { youtubeQuota?: YoutubeQuota } {
+  return client ? { youtubeQuota: client.quota() } : {};
+}
 
 const NO_USAGE: RunUsage = { unreported: 0 };
 /** What a YouTube Data API pass costs in dollars. */
@@ -99,16 +112,16 @@ async function saveTranscriptBatch(deps: CollectDeps, records: SignalRecord[]) {
  * Idempotent per record and per cover. The cursor moves only after both
  * streams succeeded and the records are stored; an actor error propagates.
  */
-export async function collectAndStore(creator: Creator, overrides: Partial<CollectDeps> = {}): Promise<CollectStep> {
+export async function collectAndStore(creator: Creator, overrides: Partial<CollectDeps> = {}, context: CollectContext = {}): Promise<CollectStep> {
   const deps = defaultDeps(overrides);
   const startedAt = deps.now();
-  const { records, usage, creatorPatch, youtubeVideos, youtubeQuota } = await deps.collect(creator);
+  const { records, usage, creatorPatch, youtubeVideos } = await deps.collect(creator, context);
   const saved = await deps.storage.saveSignals(records);
   if (youtubeVideos?.length && deps.storage.saveYoutubeVideos) await deps.storage.saveYoutubeVideos(youtubeVideos);
   // YouTube hands back the channel's current subscriber count; the Outlier ratio per Abo reads it.
   await deps.storage.upsertCreator({ ...creator, ...creatorPatch, lastCheckedAt: startedAt.toISOString() });
   const covers = await deps.cacheCovers(records);
-  return { recordsAdded: saved.inserted, recordsUpdated: saved.updated, covers, usage, ...(youtubeQuota ? { youtubeQuota } : {}) };
+  return { recordsAdded: saved.inserted, recordsUpdated: saved.updated, covers, usage };
 }
 
 /**
@@ -239,15 +252,19 @@ function runStatus(checked: number, failed: number, skipped: number, transcripts
 
 /**
  * First import for a newly added creator, logged as a backfill run. The error
- * is rethrown after the run is written so the caller can answer 502.
+ * is rethrown after the run is written so the caller can answer 502. A YouTube
+ * caller that already resolved the channel hands in its client, so the run's
+ * quota includes that call; the ledger is logged on success and on failure.
  */
-export async function runBackfill(creator: Creator, overrides: Partial<CollectDeps> = {}): Promise<CollectStep> {
+export async function runBackfill(creator: Creator, overrides: Partial<CollectDeps> = {}, context: CollectContext = {}): Promise<CollectStep> {
   const deps = defaultDeps(overrides);
   const startedAt = deps.now();
   let step: CollectStep | undefined;
   let failure: unknown;
+  let youtube = context.youtube;
   try {
-    step = await collectAndStore(creator, deps);
+    if (creator.network === "youtube") youtube ??= deps.youtubeClient();
+    step = { ...(await collectAndStore(creator, deps, { youtube })), ...ledger(youtube) };
   } catch (error) {
     failure = error;
   }
@@ -265,12 +282,39 @@ export async function runBackfill(creator: Creator, overrides: Partial<CollectDe
     recordsUpdated: step?.recordsUpdated ?? 0,
     errors: step ? [] : [{ creatorId: creator.id, handle: creator.handle, message }],
     // A failed backfill ran the actors too, but their usage never came back: unknown, not free.
-    // YouTube has no actor: the Data API is free, its quota is lost with the error.
+    // YouTube has no actor: the Data API is free, its calls are in the ledger either way.
     usage: step?.usage ?? (creator.network === "youtube" ? FREE : { unreported: 2 }),
-    ...(step?.youtubeQuota ? { youtubeQuota: step.youtubeQuota } : {}),
+    ...ledger(youtube),
   });
   if (!step) throw failure;
   return step;
+}
+
+/**
+ * Logs a backfill that failed before it could start, e.g. while a YouTube
+ * channel was being resolved, so the calls it made still appear with their quota.
+ */
+export async function logFailedBackfill(
+  storage: Pick<CollectStorage, "saveRun">,
+  creator: Pick<Creator, "id" | "handle" | "network">,
+  error: unknown,
+  youtube?: YoutubeClient,
+  now = new Date(),
+) {
+  await storage.saveRun({
+    id: newRunId(now),
+    kind: "backfill",
+    status: "failed",
+    startedAt: now.toISOString(),
+    finishedAt: now.toISOString(),
+    durationMs: 0,
+    creatorsChecked: 1,
+    recordsAdded: 0,
+    recordsUpdated: 0,
+    errors: [{ creatorId: creator.id, handle: creator.handle, message: error instanceof Error ? error.message : String(error) }],
+    usage: creator.network === "youtube" ? FREE : { unreported: 0 },
+    ...ledger(youtube),
+  });
 }
 
 /**
@@ -299,23 +343,35 @@ export async function runRefresh(overrides: Partial<CollectDeps> = {}): Promise<
   let recordsUpdated = 0;
   let covers: CoverCacheResult = { cached: 0, skipped: 0, failed: 0 };
   let usage = NO_USAGE;
-  let youtubeQuota: YoutubeQuota | undefined;
   const errors: RunError[] = [];
+  // One client per run: its ledger counts every YouTube call, failed ones included.
+  let youtubeClient: YoutubeClient | undefined;
+  let quotaExhausted = false;
+  const checked: Creator[] = [];
 
   for (const creator of creators) {
+    // After quotaExceeded every further call would fail too: the rest keep their cursor for tomorrow.
+    if (creator.network === "youtube" && quotaExhausted) {
+      skipped.push(creator);
+      continue;
+    }
+    checked.push(creator);
     try {
-      const step = await collectAndStore(creator, deps);
+      if (creator.network === "youtube") youtubeClient ??= deps.youtubeClient();
+      const step = await collectAndStore(creator, deps, { youtube: youtubeClient });
       recordsAdded += step.recordsAdded;
       recordsUpdated += step.recordsUpdated;
       covers = addCounts(covers, step.covers);
       usage = addUsage(usage, step.usage);
-      youtubeQuota = addQuota(youtubeQuota, step.youtubeQuota);
     } catch (error) {
       errors.push({ creatorId: creator.id, handle: creator.handle, message: error instanceof Error ? error.message : String(error) });
+      if (error instanceof YoutubeQuotaError) quotaExhausted = true;
       // The failing creator's actors ran (one stream may have finished) but their usage is lost with the error.
       if (creator.network !== "youtube") usage = addUsage(usage, { unreported: 2 });
     }
   }
+  if (quotaExhausted) console.log(`Refresh stopped YouTube after quotaExceeded; ${skipped.filter((c) => c.network === "youtube").length} channel(s) keep their cursor.`);
+  const youtubeQuota = youtubeClient?.quota();
 
   // Transcripts ride on the same run and the same budget as the collection. A
   // failing actor is one logged error, never a lost refresh.
@@ -344,11 +400,11 @@ export async function runRefresh(overrides: Partial<CollectDeps> = {}): Promise<
   const run: Run = {
     id: newRunId(startedAt),
     kind: "refresh",
-    status: runStatus(creators.length, errors.length - (transcriptsFailed ? 1 : 0), skipped.length, transcriptsFailed),
+    status: runStatus(checked.length, errors.length - (transcriptsFailed ? 1 : 0), skipped.length, transcriptsFailed),
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
     durationMs: finishedAt.getTime() - startedAt.getTime(),
-    creatorsChecked: creators.length,
+    creatorsChecked: checked.length,
     creatorsSkipped: skipped.length,
     recordsAdded,
     recordsUpdated,
@@ -358,10 +414,10 @@ export async function runRefresh(overrides: Partial<CollectDeps> = {}): Promise<
     ...(youtubeQuota ? { youtubeQuota } : {}),
   };
   await deps.storage.saveRun(run);
-  if (youtubeQuota) console.log(`Refresh ${run.id}: YouTube-Quota ${youtubeQuota.units} Einheiten für ${ytBatch.batch.length} Kanäle.`);
+  if (youtubeQuota) console.log(`Refresh ${run.id}: YouTube-Quota ${youtubeQuota.units} Einheiten für ${checked.filter((c) => c.network === "youtube").length} Kanäle.`);
 
   return {
-    creatorsChecked: creators.length,
+    creatorsChecked: checked.length,
     creatorsSkipped: skipped.length,
     recordsAdded,
     recordsUpdated,

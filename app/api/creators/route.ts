@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import type { Creator, Network } from "@/lib/contracts";
 import { normalizeHandle, resolveProfile } from "@/lib/adapters/sources/apify-instagram";
-import { createYoutubeClient, normalizeChannelInput, resolveChannel, youtubeCreatorId } from "@/lib/adapters/sources/youtube-data-api";
+import { createYoutubeClient, normalizeChannelInput, resolveChannel, youtubeCreatorId, type YoutubeClient } from "@/lib/adapters/sources/youtube-data-api";
 import { getStorage } from "@/lib/adapters/storage";
-import { runBackfill } from "@/lib/collect";
+import { logFailedBackfill, runBackfill } from "@/lib/collect";
 import { parseCreatorMark, type CreatorMark } from "@/lib/creator-mark";
 
 export const runtime = "nodejs";
@@ -59,8 +59,18 @@ async function existingAnswer(id: string, owned: boolean) {
  */
 async function addYoutube({ handle, owned, market }: AddInput) {
   if (!normalizeChannelInput(handle)) return NextResponse.json({ error: "Enter a YouTube @handle, channel link or channel id." }, { status: 400 });
+  // One client for resolving and backfilling: the backfill run logs both calls' quota.
+  let client: YoutubeClient | undefined;
+  let channel;
   try {
-    const channel = await resolveChannel(handle, createYoutubeClient());
+    client = createYoutubeClient();
+    channel = await resolveChannel(handle, client);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (client) await logFailedBackfill(getStorage(), { id: `youtube-${handle}`, handle, network: "youtube" }, error, client).catch(() => undefined);
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
+  try {
     const id = youtubeCreatorId(channel.channelId);
     const known = await existingAnswer(id, owned);
     if (known) return known;
@@ -76,7 +86,7 @@ async function addYoutube({ handle, owned, market }: AddInput) {
       ...(owned ? { owned: true } : {}),
       ...(market ? { market } : {}),
     };
-    const { recordsAdded, covers } = await runBackfill(creator);
+    const { recordsAdded, covers } = await runBackfill(creator, {}, { youtube: client });
     return NextResponse.json({ creator, existing: false, recordsAdded, covers });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
