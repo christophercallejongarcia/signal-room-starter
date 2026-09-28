@@ -652,5 +652,6 @@ export default defineSchema({
   creatorCandidates: defineTable(candidateFields)
     .index("by_key", ["key"])
     .index("by_bestFactor", ["bestFactor"])
-    .index("by_decision_and_bestFactor", ["decision", "bestFactor"]),
+    .index("by_decision_and_bestFactor", ["decision", "bestFactor"])
+    .index("by_network_and_decision_and_bestFactor", ["network", "decision", "bestFactor"]),
 });

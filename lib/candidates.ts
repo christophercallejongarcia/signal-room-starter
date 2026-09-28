@@ -120,9 +120,12 @@ export function settleCandidate(candidate: CreatorCandidate, claimId: string, re
   return { ...rest, decision: "selected", acceptError: error, updatedAt: result.now };
 }
 
+/** Inbox order: what Chris still has to decide first, settled Kandidaten last. */
+export const CANDIDATE_DECISION_ORDER: CandidateDecision[] = ["selected", "proposed", "deferred", "accepted", "rejected"];
+
 /** Strongest first within a decision; accepted and rejected sink below the open ones. */
 export function sortCandidates(candidates: CreatorCandidate[]) {
-  const order: Record<CandidateDecision, number> = { selected: 0, proposed: 1, deferred: 2, accepted: 3, rejected: 4 };
+  const order = Object.fromEntries(CANDIDATE_DECISION_ORDER.map((decision, index) => [decision, index])) as Record<CandidateDecision, number>;
   return [...candidates].sort((a, b) => order[a.decision] - order[b.decision] || b.bestFactor - a.bestFactor || a.key.localeCompare(b.key));
 }
 

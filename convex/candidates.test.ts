@@ -73,3 +73,19 @@ test("the Outlier query filters by factor, market and publication window, strong
   expect(rows.map((row: { videoId: string }) => row.videoId)).toEqual(["a", "b"]);
   expect((await t.query(youtube.outliers, { minFactor: 10 })).map((row: { videoId: string }) => row.videoId)).toEqual(["e", "a"]);
 });
+
+test("hundreds of settled Kandidaten never push an open one out of the inbox page", async () => {
+  const t = convexTest(schema, modules);
+  await t.run(async (ctx) => {
+    for (let i = 0; i < 500; i += 1) {
+      await ctx.db.insert("creatorCandidates", { ...candidate, key: `youtube:UCrejected${i}`, externalId: `UCrejected${i}`, bestFactor: 10, decision: "rejected" });
+    }
+    await ctx.db.insert("creatorCandidates", { ...candidate, key: "instagram:open", network: "instagram", externalId: "open", bestFactor: 50 });
+  });
+  await t.mutation(candidates.merge, { candidates: [{ ...candidate, bestFactor: 3 }] });
+  const page = await t.query(candidates.list, { network: "youtube", limit: 200 });
+  expect(page).toHaveLength(200);
+  expect(page[0]).toMatchObject({ key: candidate.key, decision: "proposed" });
+  expect(page.every((row: { network: string }) => row.network === "youtube")).toBe(true);
+  expect((await t.query(candidates.list, { limit: 2 })).map((row: { key: string }) => row.key)).toEqual(["instagram:open", candidate.key]);
+});

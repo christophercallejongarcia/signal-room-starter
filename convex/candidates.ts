@@ -1,7 +1,7 @@
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { ConvexError, v } from "convex/values";
 import type { CreatorCandidate } from "../lib/contracts";
-import { CandidateConflictError, claimCandidate, decideCandidate, mergeCandidate, settleCandidate, sortCandidates } from "../lib/candidates";
+import { CANDIDATE_DECISION_ORDER, CandidateConflictError, claimCandidate, decideCandidate, mergeCandidate, settleCandidate, sortCandidates } from "../lib/candidates";
 import { candidateDecision, candidateFields } from "./schema";
 
 /**
@@ -38,12 +38,22 @@ export const list = query({
     decision: v.optional(candidateDecision),
     limit: v.optional(v.number()),
   },
+  /**
+   * Network and decision narrow the index range before the limit applies, one
+   * decision group at a time in inbox order (open first). Hundreds of settled
+   * Kandidaten therefore never push an open one out of the page.
+   */
   handler: async (ctx, { network, decision, limit }) => {
     const cap = Math.min(Math.max(limit ?? 100, 1), LIST_MAX);
-    const rows = decision
-      ? await ctx.db.query("creatorCandidates").withIndex("by_decision_and_bestFactor", (q) => q.eq("decision", decision)).order("desc").take(LIST_MAX)
-      : await ctx.db.query("creatorCandidates").withIndex("by_bestFactor").order("desc").take(LIST_MAX);
-    return sortCandidates(rows.map(plain).filter((row) => !network || row.network === network)).slice(0, cap);
+    const rows: CreatorCandidate[] = [];
+    for (const group of decision ? [decision] : CANDIDATE_DECISION_ORDER) {
+      if (rows.length >= cap) break;
+      const page = network
+        ? await ctx.db.query("creatorCandidates").withIndex("by_network_and_decision_and_bestFactor", (q) => q.eq("network", network).eq("decision", group)).order("desc").take(cap - rows.length)
+        : await ctx.db.query("creatorCandidates").withIndex("by_decision_and_bestFactor", (q) => q.eq("decision", group)).order("desc").take(cap - rows.length);
+      rows.push(...page.map(plain));
+    }
+    return sortCandidates(rows);
   },
 });
 
