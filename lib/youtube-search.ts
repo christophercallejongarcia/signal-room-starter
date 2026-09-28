@@ -22,6 +22,7 @@ import {
   toYoutubeVideo,
   youtubeCreatorId,
   YoutubeQuotaError,
+  type CountedVideo,
   type MeasuredVideo,
   type RecentUploads,
   type ResolvedChannel,
@@ -57,6 +58,8 @@ export type YoutubeSearchResult = {
   missingTopics: YoutubeTopic[];
   videosFound: number;
   shortsSkipped: number;
+  /** Videos the API sent without a view count; they stay out of every median. */
+  countsMissing: number;
   channelsMeasured: number;
   outliers: number;
   candidates: number;
@@ -64,9 +67,11 @@ export type YoutubeSearchResult = {
   errors: string[];
 };
 
-type Find = { video: MeasuredVideo; queries: Set<string>; topics: Set<YoutubeTopic>; market: "de" | "en" };
+type Find = { video: CountedVideo; queries: Set<string>; topics: Set<YoutubeTopic>; market: "de" | "en" };
 
 const PLAYLIST_CONCURRENCY = 8;
+const VIDEO_PAGE = 50;
+const VIDEO_PAGE_CONCURRENCY = 4;
 const compact = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 });
 
 function describeCandidate(outliers: YoutubeVideo[], baseline: YoutubeBaseline, threshold: number) {
@@ -226,19 +231,35 @@ export async function runYoutubeSearch(options: { termIds?: string[] }, override
     }
   };
   await Promise.all(Array.from({ length: PLAYLIST_CONCURRENCY }, worker));
+  // The baseline videos not already known from the search, in 50-id pages. A
+  // page that fails leaves every channel with an id in it unmeasured: a median
+  // over the search hits alone would be the wrong baseline (ADR-0007), so those
+  // channels get no new factor and their stored measurements stay as they are.
   const known = new Map(found.map((video) => [video.videoId, video]));
-  const missing = pages.flatMap((page) => page.items.map((item) => item.videoId)).filter((id) => !known.has(id));
-  if (!quotaHit && missing.length) {
-    try {
-      for (const video of await fetchVideos(missing, client)) known.set(video.videoId, video);
-    } catch (error) {
-      quotaHit = error instanceof YoutubeQuotaError;
-      fail("baseline", "videos.list", error);
-    }
+  const ownerOf = new Map(pages.flatMap((page) => page.items.map((item) => [item.videoId, page.channelId] as const)));
+  const missing = [...ownerOf.keys()].filter((id) => !known.has(id));
+  const unmeasured = new Set<string>();
+  const videoPages: string[][] = [];
+  for (let i = 0; i < missing.length; i += VIDEO_PAGE) videoPages.push(missing.slice(i, i + VIDEO_PAGE));
+  for (let i = 0; i < videoPages.length; i += VIDEO_PAGE_CONCURRENCY) {
+    const group = videoPages.slice(i, i + VIDEO_PAGE_CONCURRENCY);
+    const answers = quotaHit ? [] : await Promise.allSettled(group.map((ids) => fetchVideos(ids, client)));
+    group.forEach((ids, index) => {
+      const answer = answers[index];
+      if (answer?.status === "fulfilled") {
+        for (const video of answer.value) known.set(video.videoId, video);
+        return;
+      }
+      for (const id of ids) unmeasured.add(ownerOf.get(id)!);
+      if (!answer) return;
+      if (answer.reason instanceof YoutubeQuotaError) quotaHit = true;
+      fail("baseline", "videos.list", answer.reason);
+    });
   }
   const settled = new Map(applyUploadFormats([...known.values()], pages).map((video) => [video.videoId, video]));
   const measured = new Map<string, ResolvedChannel & { baseline: YoutubeBaseline }>();
   for (const page of pages) {
+    if (unmeasured.has(page.channelId)) continue;
     const channel = channels.get(page.channelId)!;
     const own = measurableLongform(page.items.map((item) => settled.get(item.videoId)).filter((video): video is MeasuredVideo => Boolean(video)));
     measured.set(page.channelId, { ...channel, baseline: youtubeBaseline(own) });
@@ -296,7 +317,8 @@ export async function runYoutubeSearch(options: { termIds?: string[] }, override
     terms: terms.map((term) => term.term),
     missingTopics: missingTopics(terms),
     videosFound: videos.length,
-    shortsSkipped: found.length - longform.length,
+    shortsSkipped: found.filter((video) => (settled.get(video.videoId) ?? video).format === "short").length,
+    countsMissing: [...settled.values()].filter((video) => video.views === null).length,
     channelsMeasured: measured.size,
     outliers: videos.filter((video) => video.factor >= deps.candidateFactor).length,
     candidates: candidates.length,

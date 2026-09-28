@@ -28,6 +28,8 @@ export function fakeYoutube(world, options = {}) {
     const params = Object.fromEntries(parsed.searchParams);
     requests.push({ endpoint, params });
     if (options.fail?.[endpoint]) return { ok: false, status: options.fail[endpoint].status, json: async () => options.fail[endpoint].body };
+    const failure = options.failWhen?.(endpoint, params, requests.filter((r) => r.endpoint === endpoint).length);
+    if (failure) return { ok: false, status: failure.status, json: async () => failure.body };
     if (endpoint === "search") {
       const ids = world.search?.[params.q] ?? [];
       return { ok: true, status: 200, json: async () => ({ items: ids.map((videoId) => ({ id: { kind: "youtube#video", videoId } })) }) };
@@ -67,7 +69,7 @@ export function fakeYoutube(world, options = {}) {
           defaultAudioLanguage: v.language,
         },
         contentDetails: { duration: v.duration },
-        statistics: { viewCount: String(v.views), likeCount: "10", commentCount: "2" },
+        ...(v.noStats ? {} : { statistics: { viewCount: String(v.views), likeCount: "10", commentCount: "2" } }),
       }));
       return { ok: true, status: 200, json: async () => ({ items }) };
     }

@@ -158,6 +158,17 @@ function count(value: string | undefined) {
   return Number.isFinite(number) && number >= 0 ? number : 0;
 }
 
+/**
+ * A view count as the API sent it, or null when it is missing or unreadable.
+ * Null is not zero: a video without a count stays out of every median and
+ * never overwrites a stored measurement.
+ */
+function viewCount(value: string | undefined): number | null {
+  if (value === undefined || value === null || String(value).trim() === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
 function bestThumbnail(thumbnails: ApiThumbnails | undefined) {
   return thumbnails?.maxres?.url ?? thumbnails?.standard?.url ?? thumbnails?.high?.url ?? thumbnails?.medium?.url ?? thumbnails?.default?.url;
 }
@@ -210,7 +221,8 @@ export type MeasuredVideo = {
   description?: string;
   publishedAt: string;
   durationSeconds: number;
-  views: number;
+  /** Null when the API sent no usable view count (see viewCount). */
+  views: number | null;
   likes: number;
   comments: number;
   thumbnailUrl?: string;
@@ -235,7 +247,7 @@ export function mapVideo(item: ApiVideo): MeasuredVideo | null {
     ...(description ? { description: bounded(description, DESCRIPTION_MAX) } : {}),
     publishedAt: new Date(snippet.publishedAt).toISOString(),
     durationSeconds,
-    views: count(item.statistics?.viewCount),
+    views: viewCount(item.statistics?.viewCount),
     likes: count(item.statistics?.likeCount),
     comments: count(item.statistics?.commentCount),
     thumbnailUrl: bestThumbnail(snippet.thumbnails),
@@ -250,8 +262,11 @@ export function videoUrl(videoId: string) {
   return `https://www.youtube.com/watch?v=${videoId}`;
 }
 
+/** A video with a real view count: the only kind that is stored or enters a median. */
+export type CountedVideo = MeasuredVideo & { views: number };
+
 /** The Signal a watchlist video is stored as. Same id as its YoutubeVideo. */
-export function toSignal(video: MeasuredVideo, creator: Pick<Creator, "id">): SignalRecord {
+export function toSignal(video: CountedVideo, creator: Pick<Creator, "id">): SignalRecord {
   return {
     id: `yt-${video.videoId}`,
     externalId: video.videoId,
@@ -273,7 +288,7 @@ export function toSignal(video: MeasuredVideo, creator: Pick<Creator, "id">): Si
 
 /** The read-model row of one measured video. */
 export function toYoutubeVideo(
-  video: MeasuredVideo,
+  video: CountedVideo,
   channel: Pick<ResolvedChannel, "handle" | "subscribers" | "market"> & { name?: string },
   baseline: YoutubeBaseline,
   context: { now: Date; source: YoutubeVideo["source"]; market: "de" | "en"; queries?: string[]; topics?: YoutubeVideo["topics"] },
@@ -405,7 +420,7 @@ export function applyUploadFormats(videos: MeasuredVideo[], uploads: RecentUploa
   });
 }
 
-/** Video ids one search term finds. search.list, counted at 100 units. */
+/** Video ids one search term finds. One call from the search pot (YOUTUBE_SEARCH_UNIT_COST units). */
 export async function searchVideoIds(
   term: string,
   options: { market: "de" | "en"; publishedAfter: string; maxResults: number },
@@ -424,9 +439,9 @@ export async function searchVideoIds(
   return (body.items ?? []).map((item) => item.id?.videoId).filter((id): id is string => Boolean(id));
 }
 
-/** Long-form videos with a usable view count; Shorts and live or upcoming streams drop out. */
-export function measurableLongform(videos: MeasuredVideo[]) {
-  return videos.filter((video) => video.format === "long" && !video.live);
+/** Long-form videos with a usable view count; Shorts, live or upcoming streams and missing counts drop out. */
+export function measurableLongform(videos: MeasuredVideo[]): CountedVideo[] {
+  return videos.filter((video): video is CountedVideo => video.format === "long" && !video.live && video.views !== null);
 }
 
 /** What collecting one watchlist channel hands back to lib/collect.ts. */
@@ -435,14 +450,14 @@ export type YoutubeCollectResult = {
   usage: RunUsage;
   creatorPatch: Pick<Creator, "audience" | "name"> & Partial<Pick<Creator, "avatarUrl" | "url">>;
   youtubeVideos: YoutubeVideo[];
-  youtubeQuota: YoutubeQuota;
 };
 
 /**
  * Backfill and refresh of one watchlist channel are the same pass: the channel's
  * subscriber count, then its newest 50 long-form uploads with fresh numbers. Long-form
  * keeps gaining views for weeks, so the whole page is re-measured every time;
- * that is 3 quota units per channel. Older stored videos keep their last numbers.
+ * that is 3 quota units per channel, counted in the caller's client. Older
+ * stored videos and videos without a view count keep their last numbers.
  */
 export async function collectForChannel(creator: Creator, client: YoutubeClient = createYoutubeClient(), now = new Date()): Promise<YoutubeCollectResult> {
   const channelId = creator.id.replace(/^youtube-/, "");
@@ -457,7 +472,6 @@ export async function collectForChannel(creator: Creator, client: YoutubeClient 
     usage: { unreported: 0, computeUnits: 0, costUsd: 0 },
     creatorPatch: { audience: channel.subscribers, name: channel.name, ...(channel.avatarUrl ? { avatarUrl: channel.avatarUrl } : {}), url: channel.url },
     youtubeVideos: videos.map((video) => toYoutubeVideo(video, { ...channel, market }, baseline, { now, source: "watchlist", market })),
-    youtubeQuota: client.quota(),
   };
 }
 

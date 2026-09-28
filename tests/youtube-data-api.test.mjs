@@ -67,13 +67,13 @@ test("mapVideo is the one place with API fields: numbers, format, language, thum
   assert.equal(short.format, "short", "#shorts in the title marks a Short even above three minutes");
 });
 
-test("every call is counted before it is sent; search is 100 units", async () => {
+test("every call is counted before it is sent; search is a call from its own pot, 0 units by default", async () => {
   const world = { channels: [channel(CHANNEL, { now: NOW, customUrl: "chan" })], search: { q: [] } };
   const api = fakeYoutube(world);
   const client = createYoutubeClient({ apiKey: KEY, fetch: api.fetch });
   await resolveChannel("@chan", client);
   await client.get("search", "search", { q: "q" });
-  assert.deepEqual(client.quota(), { units: 101, calls: { search: 1, videos: 0, channels: 1, playlistItems: 0 } });
+  assert.deepEqual(client.quota(), { units: 1, calls: { search: 1, videos: 0, channels: 1, playlistItems: 0 } });
   assert.equal(api.requests[0].params.forHandle, "@chan");
 });
 
@@ -124,7 +124,8 @@ test("collecting a watchlist channel returns signals, fresh subscribers, read-mo
   const world = { channels: [channel(CHANNEL, { now: NOW, customUrl: "chan", subscribers: 5_000, views: 1_000, count: 30 })] };
   world.channels[0].uploads[0].views = 9_000;
   const creator = { id: `youtube-${CHANNEL}`, name: "old", handle: "@chan", network: "youtube", audience: 1, accent: "#fff" };
-  const result = await collectForChannel(creator, createYoutubeClient({ apiKey: KEY, fetch: fakeYoutube(world).fetch }), NOW);
+  const client = createYoutubeClient({ apiKey: KEY, fetch: fakeYoutube(world).fetch });
+  const result = await collectForChannel(creator, client, NOW);
   assert.equal(result.records.length, 30);
   assert.equal(result.records[0].id, `yt-${world.channels[0].uploads[0].id}`);
   assert.equal(result.records[0].format, "long");
@@ -132,6 +133,18 @@ test("collecting a watchlist channel returns signals, fresh subscribers, read-mo
   const top = result.youtubeVideos.find((video) => video.views === 9_000);
   assert.equal(top.factor, 9, "9,000 views over a 1,000 median");
   assert.equal(top.source, "watchlist");
-  assert.equal(result.youtubeQuota.units, 3, "channels + one playlist page + one videos call");
+  assert.equal(client.quota().units, 3, "channels + one playlist page + one videos call, in the caller's ledger");
   assert.equal(result.usage.costUsd, 0);
+});
+
+test("a missing view count is not zero: it stays out of the baseline and is never stored", async () => {
+  const world = { channels: [channel(CHANNEL, { now: NOW, customUrl: "chan", views: 10_000, count: 30 })] };
+  // Twelve of the channel's normal videos arrive without statistics.
+  for (const video of world.channels[0].uploads.slice(0, 12)) video.noStats = true;
+  const creator = { id: `youtube-${CHANNEL}`, name: "c", handle: "@chan", network: "youtube", audience: 1, accent: "#fff" };
+  const result = await collectForChannel(creator, createYoutubeClient({ apiKey: KEY, fetch: fakeYoutube(world).fetch }), NOW);
+  assert.equal(result.records.length, 18, "no Signal is written for a video without a count");
+  assert.equal(result.youtubeVideos[0].channelMedian, 10_000);
+  assert.equal(result.youtubeVideos[0].baselineCount, 18);
+  assert.equal(mapVideo({ id: "z", snippet: { channelId: CHANNEL, publishedAt: "2026-09-20T10:00:00Z" }, contentDetails: { duration: "PT10M" }, statistics: { viewCount: "0" } }).views, 0, "a real zero stays zero");
 });
