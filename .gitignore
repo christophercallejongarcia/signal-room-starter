@@ -1,15 +1,64 @@
 node_modules
 .next
 out
-.env
-.env.local
 .DS_Store
 npm-debug.log*
 runtime
 coverage
 .playwright-mcp/
 *.tsbuildinfo
+
+# Secrets: every env file stays local, only the template is committed
+.env
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+id_rsa*
+
+# Cookies, browser sessions and auth material
+*cookies*.json
+*cookies*.txt
+*.cookie
+cookie-jar*
+sessions/
+*.session
+storage-state*.json
+storageState*.json
+auth.json
+*.har
+
+# Collected corpus, cover cache and generated covers
 data/
+/covers/
+/public/covers/
+
+# Screenshots, recordings and raw material. Docs images go through review
+# and are added on purpose; ad-hoc captures at the repo root never are.
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/*.gif
+screenshots/
+**/screenshots/
+Screenshot*
+# Live captures with real creators, moved out of the repo (see docs/showcase/)
+docs/assets/discover-live.png
+docs/assets/discover-outliers.png
+Bildschirmfoto*
+*.mov
+*.mp4
+*.m4a
+*.webm
+*.wav
+recordings/
+aufnahmen/
+Aufnahmen/
+rohmaterial/
+Rohmaterial/
+raw/
 
 # afk logs of the local issue tracker (mattpocock/skills); tickets and specs are committed
 .scratch/afk-logs/
