@@ -1,7 +1,7 @@
 import { env, internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { ConvexError, v } from "convex/values";
 import { analysisText, createTranscriptAnalysis, hashTranscriptText, validateTranscriptAnalysisSettlement, TRANSCRIPT_ANALYSIS_CLAIM_TIMEOUT_MS, TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS } from "../lib/transcript-analysis";
-import { transcriptAnalysisChunkFields, transcriptAnalysisFields, transcriptAnalysisFindingFields } from "./schema";
+import { transcriptAnalysisChunkFields, transcriptAnalysisFields, transcriptAnalysisFindingFields, transcriptAnalysisFrameworkEvidenceFields } from "./schema";
 
 function publicRow<T extends { _id: unknown; _creationTime: number }>(row: T) {
   const { _id, _creationTime, ...value } = row;
@@ -122,6 +122,7 @@ const settleArgs = {
     status: v.union(v.literal("complete"), v.literal("failed")),
     now: v.string(),
     framework: v.optional(v.union(v.literal("pas"), v.literal("bbb"), v.literal("none"))),
+    frameworkEvidence: v.optional(v.array(v.object(transcriptAnalysisFrameworkEvidenceFields))),
     findings: v.optional(v.array(v.object(transcriptAnalysisFindingFields))),
     chunks: v.optional(v.array(v.object(transcriptAnalysisChunkFields))),
     textLength: v.optional(v.number()),
@@ -135,6 +136,7 @@ async function settleJob(ctx: MutationCtx, args: {
   status: "complete" | "failed";
   now: string;
   framework?: "pas" | "bbb" | "none";
+  frameworkEvidence?: Array<{ component: "pas-problem" | "pas-agitation" | "pas-solution" | "bbb-claim" | "bbb-reason" | "bbb-example"; explanation: string; quote: string; start: number; end: number; timecode?: { start: number; end: number } }>;
   findings?: Array<{ feature: "hook" | "tension" | "loop" | "proof" | "example" | "transition" | "rhythm" | "cta"; explanation: string; quote: string; start: number; end: number; timecode?: { start: number; end: number } }>;
   chunks?: Array<{ index: number; start: number; end: number; status: "complete" | "missing" }>;
   textLength?: number;
@@ -150,6 +152,7 @@ async function settleJob(ctx: MutationCtx, args: {
     await ctx.db.patch(analysis._id, {
       status: args.status,
       ...(args.framework === undefined ? {} : { framework: args.framework }),
+      ...(args.frameworkEvidence === undefined ? {} : { frameworkEvidence: args.frameworkEvidence }),
       ...(args.findings === undefined ? {} : { findings: args.findings }),
       ...(args.chunks === undefined ? {} : { chunks: args.chunks }),
       ...(args.textLength === undefined ? {} : { textLength: args.textLength }),

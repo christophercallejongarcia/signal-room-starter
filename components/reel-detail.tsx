@@ -16,8 +16,8 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useState, type MouseEvent } from "react";
 import { CoverImage, formatNumber, networkName } from "@/components/display";
-import type { Creator, RankedSignal, Run, SignalRecord, TranscriptAnalysis, TranscriptAnalysisFeature, TranscriptCorrection, TranscriptDictionaryEntry } from "@/lib/contracts";
-import { createTranscriptAnalysis, transcriptAnalysisView } from "@/lib/transcript-analysis";
+import type { Creator, RankedSignal, Run, SignalRecord, TranscriptAnalysis, TranscriptAnalysisFeature, TranscriptAnalysisFrameworkComponent, TranscriptCorrection, TranscriptDictionaryEntry } from "@/lib/contracts";
+import { canStartTranscriptAnalysis, createTranscriptAnalysis, shouldRefreshTranscriptAnalysis, transcriptAnalysisView } from "@/lib/transcript-analysis";
 import {
   applyTranscriptCorrectionAction,
   countTranscriptOccurrences,
@@ -132,6 +132,15 @@ const ANALYSIS_FEATURE_LABELS: Record<TranscriptAnalysisFeature, string> = {
   cta: "CTA",
 };
 
+const FRAMEWORK_COMPONENT_LABELS: Record<TranscriptAnalysisFrameworkComponent, string> = {
+  "pas-problem": "PAS · Problem",
+  "pas-agitation": "PAS · Agitation",
+  "pas-solution": "PAS · Solution",
+  "bbb-claim": "BBB · Behaupten",
+  "bbb-reason": "BBB · Begründen",
+  "bbb-example": "BBB · Beispiel",
+};
+
 function demoAnalysis(signal: RankedSignal): TranscriptAnalysis[] {
   const analysis = createTranscriptAnalysis(signal, "2026-08-31T12:00:00.000Z", "analysis-run-demo");
   const text = signal.transcriptWorkingCopy || signal.transcript || "";
@@ -141,6 +150,14 @@ function demoAnalysis(signal: RankedSignal): TranscriptAnalysis[] {
     ...analysis,
     status: "complete",
     framework: "bbb",
+    frameworkEvidence: (["bbb-claim", "bbb-reason", "bbb-example"] as const).map((component) => ({
+      component,
+      explanation: `Synthetischer Beleg für ${component}.`,
+      quote,
+      start: 0,
+      end: quote.length,
+      timecode: { start: 0, end: 5.4 },
+    })),
     completedAt: "2026-08-31T12:00:01.000Z",
     complete: true,
     chunks: [{ index: 0, start: 0, end: text.length, status: "complete" }],
@@ -195,6 +212,8 @@ export function ReelDetailPanel({
   const actionLabel = status === "none" ? "Transcribe" : status === "pending" ? "Transcribing…" : "Retry";
   const ActionIcon = status === "none" ? Microphone : ArrowCounterClockwise;
   const analysisView = transcriptAnalysisView(displaySignal, analyses);
+  const displayedAnalysis = (analysisView.status === "complete" || analysisView.status === "stale" ? analysisView.analysis : undefined) ?? analysisView.previousResult;
+  const displayedAnalysisIsStale = Boolean(displayedAnalysis && (analysisView.status === "stale" || displayedAnalysis.id === analysisView.previousResult?.id));
 
   useEffect(() => {
     setDisplaySignal(signal);
@@ -222,6 +241,29 @@ export function ReelDetailPanel({
       .finally(() => { if (active) setAnalysisLoading(false); });
     return () => { active = false; };
   }, [demo, displaySignal.id, displaySignal.transcript, displaySignal.transcriptWorkingCopy, status]);
+
+  useEffect(() => {
+    if (demo || status !== "ready" || !shouldRefreshTranscriptAnalysis(analysisView.status)) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch(`/api/transcript-analyses?signalId=${encodeURIComponent(displaySignal.id)}`, { cache: "no-store" });
+        const payload = (await response.json().catch(() => ({}))) as { analyses?: TranscriptAnalysis[]; error?: string };
+        if (!response.ok) throw new Error(payload.error || `Analysis refresh failed with HTTP ${response.status}.`);
+        if (active) {
+          setAnalyses(payload.analyses ?? []);
+          setAnalysisError("");
+        }
+      } catch (error) {
+        if (active) setAnalysisError(error instanceof Error ? error.message : "Analyse konnte nicht aktualisiert werden.");
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 3_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [analysisView.status, demo, displaySignal.id, status]);
 
   async function runAnalysis() {
     if (analysisLoading) return;
@@ -614,32 +656,45 @@ export function ReelDetailPanel({
               )}
               {analysisView.status === "failed" && <p className="transcript-analysis-message error"><XCircle size={14} /> {analysisView.analysis?.error || "Der Bridge-Lauf ist fehlgeschlagen."}</p>}
               {analysisView.status === "stale" && <p className="transcript-analysis-message"><Clock size={14} /> Die sichtbare Analyse gehört zu einer älteren Textfassung. Starte sie für die aktuelle Arbeitsfassung neu.</p>}
+              {displayedAnalysisIsStale && analysisView.status !== "stale" && <p className="transcript-analysis-message"><Clock size={14} /> Die aktuelle Analyse ist noch nicht fertig. Das bisherige Ergebnis aus der älteren Textfassung bleibt unten lesbar.</p>}
 
-              {analysisView.analysis && (analysisView.status === "complete" || analysisView.status === "stale") && (
+              {displayedAnalysis && (
                 <>
                   <dl className="transcript-analysis-meta">
-                    <div><dt>Textfassung</dt><dd>{analysisView.analysis.textVersion === "working" ? "Arbeitsfassung" : "Original"}</dd></div>
-                    <div><dt>Text-Hash</dt><dd title={analysisView.analysis.textHash}>{analysisView.analysis.textHash.slice(0, 12)}…</dd></div>
-                    <div><dt>Analyseversion</dt><dd>{analysisView.analysis.analysisVersion}</dd></div>
-                    <div><dt>Framework</dt><dd>{analysisView.analysis.framework === "bbb" ? "BBB · Behaupten, Begründen, Beispiel" : analysisView.analysis.framework === "pas" ? "PAS · Problem, Agitation, Solution" : "Keins"}</dd></div>
+                    <div><dt>Textfassung</dt><dd>{displayedAnalysis.textVersion === "working" ? "Arbeitsfassung" : "Original"}{displayedAnalysisIsStale ? " · veraltet" : ""}</dd></div>
+                    <div><dt>Text-Hash</dt><dd title={displayedAnalysis.textHash}>{displayedAnalysis.textHash.slice(0, 12)}…</dd></div>
+                    <div><dt>Analyseversion</dt><dd>{displayedAnalysis.analysisVersion}</dd></div>
+                    <div><dt>Framework</dt><dd>{displayedAnalysis.framework === "bbb" ? `BBB · Behaupten, Begründen, Beispiel${displayedAnalysis.frameworkEvidence?.length ? "" : " · nicht belegt"}` : displayedAnalysis.framework === "pas" ? `PAS · Problem, Agitation, Solution${displayedAnalysis.frameworkEvidence?.length ? "" : " · nicht belegt"}` : "Keins"}</dd></div>
                   </dl>
-                  {!analysisView.analysis.complete && <p className="transcript-analysis-message"><Clock size={14} /> Unvollständig: {analysisView.analysis.chunks.filter((chunk) => chunk.status === "complete").length} von {analysisView.analysis.chunks.length} Textteilen wurden geprüft.</p>}
+                  {!displayedAnalysis.complete && <p className="transcript-analysis-message"><Clock size={14} /> Unvollständig: {displayedAnalysis.chunks.filter((chunk) => chunk.status === "complete").length} von {displayedAnalysis.chunks.length} Textteilen wurden geprüft.</p>}
+                  {displayedAnalysis.framework !== "none" && !displayedAnalysis.frameworkEvidence?.length && <p className="transcript-analysis-message error"><XCircle size={14} /> Diese ältere Framework-Zuordnung hat keine eigenen Fundstellen und gilt daher als unbelegt.</p>}
+                  {!!displayedAnalysis.frameworkEvidence?.length && (
+                    <div className="transcript-analysis-findings">
+                      {displayedAnalysis.frameworkEvidence.map((item, index) => (
+                        <article key={`${item.component}-${item.start}-${index}`}>
+                          <div><strong>{FRAMEWORK_COMPONENT_LABELS[item.component]}</strong>{item.timecode && <time>{formatTimecode(item.timecode.start)}–{formatTimecode(item.timecode.end)}</time>}</div>
+                          <p>{item.explanation}</p>
+                          <blockquote>„{item.quote}“ <span>Zeichen {item.start}–{item.end}</span></blockquote>
+                        </article>
+                      ))}
+                    </div>
+                  )}
                   <div className="transcript-analysis-findings">
-                    {analysisView.analysis.findings.map((finding, index) => (
+                    {displayedAnalysis.findings.map((finding, index) => (
                       <article key={`${finding.feature}-${finding.start}-${index}`}>
                         <div><strong>{ANALYSIS_FEATURE_LABELS[finding.feature]}</strong>{finding.timecode && <time>{formatTimecode(finding.timecode.start)}–{formatTimecode(finding.timecode.end)}</time>}</div>
                         <p>{finding.explanation}</p>
                         <blockquote>„{finding.quote}“ <span>Zeichen {finding.start}–{finding.end}</span></blockquote>
                       </article>
                     ))}
-                    {analysisView.analysis.findings.length === 0 && <p className="transcript-analysis-message">Keine belegten Merkmale in der geprüften Fassung.</p>}
+                    {displayedAnalysis.findings.length === 0 && <p className="transcript-analysis-message">Keine belegten Merkmale in der geprüften Fassung.</p>}
                   </div>
                 </>
               )}
 
-              {(analysisView.status === "empty" || analysisView.status === "failed" || analysisView.status === "stale") && (
+              {canStartTranscriptAnalysis(analysisView.status) && (
                 <button className="secondary-button" type="button" onClick={() => void runAnalysis()} disabled={analysisLoading}>
-                  <ArrowCounterClockwise size={14} className={analysisLoading ? "spin" : undefined} /> {analysisView.status === "failed" ? "Erneut versuchen" : analysisView.status === "stale" ? "Aktuell analysieren" : "Analyse starten"}
+                  <ArrowCounterClockwise size={14} className={analysisLoading ? "spin" : undefined} /> {analysisView.status === "failed" ? "Erneut versuchen" : analysisView.status === "stale" ? "Aktuell analysieren" : analysisView.status === "queued" ? "Jetzt analysieren" : "Analyse starten"}
                 </button>
               )}
             </section>

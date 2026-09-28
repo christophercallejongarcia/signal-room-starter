@@ -42,7 +42,8 @@ test("Convex queues at the signal write boundary and settles one claimed result"
     claimId: "claim-1",
     status: "complete",
     now: "2026-09-10T10:01:00.000Z",
-    framework: "pas",
+    framework: "none",
+    frameworkEvidence: [],
     findings: [{ feature: "hook", explanation: "Einstieg", quote: "Hook.", start: 0, end: 5 }],
     chunks: [{ index: 0, start: 0, end: 13, status: "complete" }],
     textLength: 13,
@@ -103,6 +104,27 @@ test("Convex claims the selected analysis ahead of an older queued job", async (
   expect(claimed?.id).toBe(selected.id);
   const [older] = await t.query(api.transcriptAnalyses.list, { signalId: "ig-older-selected-test" });
   expect(older.status).toBe("queued");
+});
+
+test("Convex returns the current analysis after a working-copy correction is reverted", async () => {
+  const t = convexTest(schema, modules);
+  const revertedSignal = { ...signal, id: "ig-convex-reverted", transcript: "Original A." };
+  await t.mutation(api.signals.bulkUpsert, { records: [revertedSignal] });
+  const [original] = await t.query(api.transcriptAnalyses.list, { signalId: revertedSignal.id });
+  await t.mutation(api.signals.patchTranscript, {
+    id: revertedSignal.id,
+    patch: { transcriptWorkingCopy: "Korrektur B.", transcriptUpdatedAt: "2026-09-10T10:01:00.000Z" },
+  });
+  await t.mutation(api.signals.patchTranscript, {
+    id: revertedSignal.id,
+    patch: { transcriptWorkingCopy: null, transcriptUpdatedAt: "2026-09-10T10:02:00.000Z" },
+  });
+
+  const current = await t.mutation(internal.transcriptAnalyses.enqueueInternal, {
+    signalId: revertedSignal.id,
+    now: "2026-09-10T10:03:00.000Z",
+  });
+  expect(current?.id).toBe(original.id);
 });
 
 test("public worker mutations fail closed without the deployment secret", async () => {

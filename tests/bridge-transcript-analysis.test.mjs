@@ -8,7 +8,7 @@ import {
 
 const valid = {
   signalId: "ig-analysis-1",
-  analysisVersion: "content-analysis-v1",
+  analysisVersion: "content-analysis-v2",
   textVersion: "working",
   text: "  Hook 🙂.  ",
   offset: 120,
@@ -26,9 +26,12 @@ test("validates a bounded analysis chunk without changing source text", () => {
 });
 
 test("declares a bounded fixed analysis response schema", () => {
-  assert.deepEqual(transcriptAnalysisOutputSchema.required, ["framework", "findings"]);
+  assert.deepEqual(transcriptAnalysisOutputSchema.required, ["framework", "frameworkEvidence", "findings"]);
   assert.equal(transcriptAnalysisOutputSchema.additionalProperties, false);
   assert.deepEqual(transcriptAnalysisOutputSchema.properties.framework.enum, ["pas", "bbb", "none"]);
+  const frameworkEvidence = transcriptAnalysisOutputSchema.properties.frameworkEvidence.items;
+  assert.deepEqual(frameworkEvidence.required, ["component", "explanation", "quote", "start", "end"]);
+  assert.deepEqual(frameworkEvidence.properties.component.enum, ["pas-problem", "pas-agitation", "pas-solution", "bbb-claim", "bbb-reason", "bbb-example"]);
   const finding = transcriptAnalysisOutputSchema.properties.findings.items;
   assert.deepEqual(finding.required, ["feature", "explanation", "quote", "start", "end"]);
   assert.equal(finding.additionalProperties, false);
@@ -38,9 +41,9 @@ test("declares a bounded fixed analysis response schema", () => {
 test("analysis prompt carries the central frameworks and treats transcript as source text", () => {
   const prompt = buildTranscriptAnalysisPrompt(validateTranscriptAnalysisRequest(valid));
   assert.match(prompt, /Behaupten, Begründen, Beispiel/);
+  assert.match(prompt, /pas-problem.*pas-agitation.*pas-solution/s);
   assert.match(prompt, /untrusted source text/i);
   assert.match(prompt, /Do not browse, run commands or edit files/i);
   assert.match(prompt, /Hook.*Spannung.*Schleifen.*Beweise.*Beispiele.*Übergänge.*Rhythmus.*CTA/s);
   assert.match(prompt, /Hook 🙂/);
 });
-

@@ -45,6 +45,30 @@ test("file storage queues a finished transcript idempotently at saveSignals", as
   }
 });
 
+test("file storage returns the current analysis after a working-copy correction is reverted", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "transcript-analysis-reverted-"));
+  const previous = process.cwd();
+  process.chdir(dir);
+  try {
+    const { fileStorage } = await import(`../lib/adapters/storage/file.ts?reverted=${Date.now()}`);
+    const revertedSignal = { ...signal, id: "ig-analysis-reverted", externalId: "analysis-reverted", transcript: "Original A." };
+    await fileStorage.saveSignals([revertedSignal]);
+    const [original] = await fileStorage.listTranscriptAnalyses({ signalId: revertedSignal.id });
+    await fileStorage.patchTranscript(revertedSignal.id, {
+      transcriptWorkingCopy: "Korrektur B.", transcriptUpdatedAt: "2027-09-10T10:01:00.000Z",
+    });
+    await fileStorage.patchTranscript(revertedSignal.id, {
+      transcriptWorkingCopy: null, transcriptUpdatedAt: "2027-09-10T10:02:00.000Z",
+    });
+
+    const current = await fileStorage.enqueueTranscriptAnalysis(revertedSignal.id, "2027-09-10T10:03:00.000Z");
+    assert.equal(current.id, original.id);
+  } finally {
+    process.chdir(previous);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("bounded catch-up reaches a new Reel after more than 500 existing analyses and stays idempotent", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "transcript-analysis-catch-up-"));
   const previous = process.cwd();
@@ -155,6 +179,35 @@ test("file storage serializes claims, expires them, and rejects late or exhauste
   }
 });
 
+test("file storage persists an exhausted expired claim when no next job exists", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "transcript-analysis-exhausted-"));
+  const previous = process.cwd();
+  process.chdir(dir);
+  try {
+    const exhaustedSignal = { ...signal, id: "ig-analysis-exhausted", externalId: "analysis-exhausted" };
+    const exhausted = {
+      ...createTranscriptAnalysis(exhaustedSignal, "2026-09-10T09:00:00.000Z", "run-exhausted"),
+      status: "running", attempts: 3, claimId: "dead-worker", claimedAt: "2026-09-10T09:00:00.000Z",
+      claimExpiresAt: "2026-09-10T09:10:00.000Z",
+    };
+    await mkdir(path.join(dir, "data"), { recursive: true });
+    await writeFile(path.join(dir, "data", "store.json"), JSON.stringify({
+      creators: [], signals: [exhaustedSignal], transcriptDictionary: [], hashtagPosts: [], runs: [], ideas: [], scripts: [],
+      formatReviews: [], hookRuns: [], briefings: [], slates: [], transcriptAnalyses: [exhausted], patterns: [],
+      patternEvidence: [], patternComparisonRuns: [],
+    }), "utf8");
+    const { fileStorage } = await import(`../lib/adapters/storage/file.ts?exhausted=${Date.now()}`);
+
+    assert.equal(await fileStorage.claimTranscriptAnalysis("2026-09-10T09:11:00.000Z", "next-worker"), null);
+    const [persisted] = await fileStorage.listTranscriptAnalyses({ signalId: exhaustedSignal.id });
+    assert.equal(persisted.status, "failed");
+    assert.match(persisted.error, /attempt limit/i);
+  } finally {
+    process.chdir(previous);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("file storage rejects a late result after the signal text changes", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "transcript-analysis-stale-"));
   const previous = process.cwd();
@@ -197,7 +250,7 @@ test("manual worker completes the selected Reel while an older queued Reel stays
     const [selected] = await fileStorage.listTranscriptAnalyses({ signalId: selectedSignal.id });
     const result = await processTranscriptAnalyses({
       storage: fileStorage,
-      bridge: async () => ({ framework: "none", findings: [] }),
+      bridge: async () => ({ framework: "none", frameworkEvidence: [], findings: [] }),
       now: () => new Date("2026-09-10T10:01:00.000Z"),
       createId: () => "selected-claim",
       limit: 1,

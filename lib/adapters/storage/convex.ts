@@ -140,6 +140,7 @@ export function createConvexStorage(url: string): StorageAdapter & { upsertCreat
         status: result.status,
         now: result.now,
         ...(result.framework === undefined ? {} : { framework: result.framework }),
+        ...(result.frameworkEvidence === undefined ? {} : { frameworkEvidence: result.frameworkEvidence }),
         ...(result.findings === undefined ? {} : { findings: result.findings }),
         ...(result.chunks === undefined ? {} : { chunks: result.chunks }),
         ...(result.textLength === undefined ? {} : { textLength: result.textLength }),

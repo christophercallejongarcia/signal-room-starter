@@ -9,10 +9,13 @@ import {
   parseTranscriptAnalysisResponse,
   timecodeForFinding,
   TRANSCRIPT_ANALYSIS_CLAIM_TIMEOUT_MS,
+  TRANSCRIPT_ANALYSIS_DEFAULT_CHUNK_SIZE,
+  TRANSCRIPT_ANALYSIS_DEFAULT_MAX_CHUNKS,
+  TRANSCRIPT_ANALYSIS_FRAMEWORK_COMPONENTS,
   TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS,
   TRANSCRIPT_ANALYSIS_VERSION,
 } from "./transcript-analysis.ts";
-import type { SignalRecord, StorageAdapter, TranscriptAnalysis, TranscriptAnalysisFinding, TranscriptAnalysisChunkState, TranscriptAnalysisStatus } from "./contracts.ts";
+import type { SignalRecord, StorageAdapter, TranscriptAnalysis, TranscriptAnalysisFinding, TranscriptAnalysisFrameworkEvidence, TranscriptAnalysisChunkState, TranscriptAnalysisStatus } from "./contracts.ts";
 
 export type TranscriptAnalysisQueueStorage = Pick<StorageAdapter, "listSignals" | "listTranscriptAnalyses" | "enqueueTranscriptAnalysis">;
 export type TranscriptAnalysisQueueResult = { queued: number; existing: number; skipped: number; analyses: TranscriptAnalysis[]; nextCursor?: string };
@@ -116,8 +119,8 @@ function defaults(overrides: Partial<TranscriptAnalysisRunDeps>): TranscriptAnal
     now: overrides.now ?? (() => new Date()),
     createId: overrides.createId ?? ((prefix) => `${prefix}-${randomUUID()}`),
     limit: Math.min(Math.max(Math.floor(overrides.limit ?? 3), 0), 20),
-    chunkSize: Math.max(2, Math.floor(overrides.chunkSize ?? 4_000)),
-    maxChunks: Math.min(Math.max(Math.floor(overrides.maxChunks ?? 8), 1), 20),
+    chunkSize: Math.max(2, Math.floor(overrides.chunkSize ?? TRANSCRIPT_ANALYSIS_DEFAULT_CHUNK_SIZE)),
+    maxChunks: Math.min(Math.max(Math.floor(overrides.maxChunks ?? TRANSCRIPT_ANALYSIS_DEFAULT_MAX_CHUNKS), 1), 20),
     analysisId: overrides.analysisId,
   };
 }
@@ -155,6 +158,7 @@ async function processClaim(deps: TranscriptAnalysisRunDeps, analysis: Transcrip
   const chunks = chunkTranscript(source.text, deps.chunkSize);
   const work = chunks.slice(0, deps.maxChunks);
   const findings: TranscriptAnalysisFinding[] = [];
+  const frameworkEvidence: TranscriptAnalysisFrameworkEvidence[] = [];
   let framework: "pas" | "bbb" | "none" = "none";
   for (const chunk of work) {
     const answer = parseTranscriptAnalysisResponse(await deps.bridge({
@@ -167,6 +171,18 @@ async function processClaim(deps: TranscriptAnalysisRunDeps, analysis: Transcrip
       chunkCount: chunks.length,
     }), chunk.text);
     if (framework === "none" && answer.framework !== "none") framework = answer.framework;
+    if (answer.framework === framework) {
+      for (const item of answer.frameworkEvidence) {
+        const adjusted: TranscriptAnalysisFrameworkEvidence = {
+          ...item,
+          start: item.start + chunk.start,
+          end: item.end + chunk.start,
+        };
+        const timecode = timecodeForFinding(adjusted, source.text, signal.transcript ?? "", signal.transcriptSegments ?? []);
+        if (timecode) adjusted.timecode = timecode;
+        if (!frameworkEvidence.some((existing) => existing.component === adjusted.component && existing.start === adjusted.start && existing.end === adjusted.end)) frameworkEvidence.push(adjusted);
+      }
+    }
     for (const finding of answer.findings) {
       const adjusted: TranscriptAnalysisFinding = {
         ...finding,
@@ -184,10 +200,17 @@ async function processClaim(deps: TranscriptAnalysisRunDeps, analysis: Transcrip
     end: chunk.end,
     status: work.some((processed) => processed.index === chunk.index) ? "complete" : "missing",
   }));
+  const frameworkIsFullySupported = TRANSCRIPT_ANALYSIS_FRAMEWORK_COMPONENTS[framework]
+    .every((component) => frameworkEvidence.some((item) => item.component === component));
+  if (!frameworkIsFullySupported) {
+    framework = "none";
+    frameworkEvidence.length = 0;
+  }
   return deps.storage.settleTranscriptAnalysis(analysis.id, claimId, {
     status: "complete",
     now: deps.now().toISOString(),
     framework,
+    frameworkEvidence,
     findings,
     chunks: chunkStates,
     textLength: source.text.length,

@@ -82,6 +82,24 @@ export const transcriptAnalysisFindingFields = {
   timecode: v.optional(v.object({ start: v.number(), end: v.number() })),
 };
 
+const transcriptAnalysisFrameworkComponent = v.union(
+  v.literal("pas-problem"),
+  v.literal("pas-agitation"),
+  v.literal("pas-solution"),
+  v.literal("bbb-claim"),
+  v.literal("bbb-reason"),
+  v.literal("bbb-example"),
+);
+
+export const transcriptAnalysisFrameworkEvidenceFields = {
+  component: transcriptAnalysisFrameworkComponent,
+  explanation: v.string(),
+  quote: v.string(),
+  start: v.number(),
+  end: v.number(),
+  timecode: v.optional(v.object({ start: v.number(), end: v.number() })),
+};
+
 export const transcriptAnalysisChunkFields = {
   index: v.number(),
   start: v.number(),
@@ -106,6 +124,7 @@ export const transcriptAnalysisFields = {
   completedAt: v.optional(v.string()),
   error: v.optional(v.string()),
   framework: v.union(v.literal("pas"), v.literal("bbb"), v.literal("none")),
+  frameworkEvidence: v.optional(v.array(v.object(transcriptAnalysisFrameworkEvidenceFields))),
   findings: v.array(v.object(transcriptAnalysisFindingFields)),
   chunks: v.array(v.object(transcriptAnalysisChunkFields)),
   textLength: v.number(),

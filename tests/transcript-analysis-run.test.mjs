@@ -7,7 +7,7 @@ test("local worker claims a queued analysis and persists validated findings", as
   const signal = {
     id: "ig-worker-1",
     format: "reel",
-    transcript: "Hook. Beweis.",
+    transcript: "Problem. Druck. Lösung. Hook. Beweis.",
     transcriptStatus: "ready",
     transcriptSegments: [{ start: 0, end: 2, text: "Hook. Beweis." }],
   };
@@ -29,7 +29,15 @@ test("local worker claims a queued analysis and persists validated findings", as
     storage,
     bridge: async (input) => {
       request = input;
-      return { framework: "pas", findings: [{ feature: "hook", explanation: "Der Einstieg.", quote: "Hook.", start: 0, end: 5 }] };
+      return {
+        framework: "pas",
+        frameworkEvidence: [
+          { component: "pas-problem", explanation: "Problem", quote: "Problem.", start: 0, end: 8 },
+          { component: "pas-agitation", explanation: "Zuspitzung", quote: "Druck.", start: 9, end: 15 },
+          { component: "pas-solution", explanation: "Lösung", quote: "Lösung.", start: 16, end: 23 },
+        ],
+        findings: [{ feature: "hook", explanation: "Der Einstieg.", quote: "Hook.", start: 24, end: 29 }],
+      };
     },
     now: () => new Date("2026-09-10T10:01:00.000Z"),
     createId: () => "worker-1",
@@ -40,6 +48,7 @@ test("local worker claims a queued analysis and persists validated findings", as
   assert.equal(request.offset, 0);
   assert.equal(settled.status, "complete");
   assert.equal(settled.findings[0].quote, "Hook.");
+  assert.deepEqual(settled.frameworkEvidence.map((item) => item.component), ["pas-problem", "pas-agitation", "pas-solution"]);
   assert.deepEqual(settled.findings[0].timecode, { start: 0, end: 2 });
 });
 
@@ -65,8 +74,8 @@ test("later chunks keep original positions when mapping a finding to a timecode"
   await processTranscriptAnalyses({
     storage,
     bridge: async (request) => request.chunkIndex === 1
-      ? { framework: "bbb", findings: [{ feature: "proof", explanation: "Beleg", quote: "Zweiter Bewei", start: 0, end: 13 }] }
-      : { framework: "none", findings: [] },
+      ? { framework: "none", frameworkEvidence: [], findings: [{ feature: "proof", explanation: "Beleg", quote: "Zweiter Bewei", start: 0, end: 13 }] }
+      : { framework: "none", frameworkEvidence: [], findings: [] },
     now: () => new Date("2026-09-10T10:01:00.000Z"),
     createId: () => "claim-2",
     limit: 1,
@@ -88,7 +97,7 @@ test("bounded worker stores missing chunks instead of calling a partial run comp
   };
   await processTranscriptAnalyses({
     storage,
-    bridge: async () => ({ framework: "none", findings: [] }),
+    bridge: async () => ({ framework: "none", frameworkEvidence: [], findings: [] }),
     now: () => new Date("2026-09-10T10:01:00.000Z"),
     createId: () => "claim-long",
     limit: 1,

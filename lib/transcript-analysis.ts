@@ -6,6 +6,8 @@ import type {
   TranscriptAnalysisFeature,
   TranscriptAnalysisFinding,
   TranscriptAnalysisFramework,
+  TranscriptAnalysisFrameworkComponent,
+  TranscriptAnalysisFrameworkEvidence,
   TranscriptAnalysisStatus,
   TranscriptAnalysisTextVersion,
   TranscriptSegment,
@@ -17,13 +19,18 @@ export type {
   TranscriptAnalysisFeature,
   TranscriptAnalysisFinding,
   TranscriptAnalysisFramework,
+  TranscriptAnalysisFrameworkComponent,
+  TranscriptAnalysisFrameworkEvidence,
   TranscriptAnalysisStatus,
   TranscriptAnalysisTextVersion,
 } from "./contracts.ts";
 
-export const TRANSCRIPT_ANALYSIS_VERSION = "content-analysis-v1";
+export const TRANSCRIPT_ANALYSIS_VERSION = "content-analysis-v2";
 export const TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS = 3;
 export const TRANSCRIPT_ANALYSIS_CLAIM_TIMEOUT_MS = 10 * 60_000;
+export const TRANSCRIPT_ANALYSIS_DEFAULT_CHUNK_SIZE = 4_000;
+export const TRANSCRIPT_ANALYSIS_DEFAULT_MAX_CHUNKS = 8;
+export const TRANSCRIPT_ANALYSIS_FULL_TEXT_MAX_CHARS = TRANSCRIPT_ANALYSIS_DEFAULT_CHUNK_SIZE * TRANSCRIPT_ANALYSIS_DEFAULT_MAX_CHUNKS;
 
 const SHA256_K = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -117,8 +124,15 @@ export const TRANSCRIPT_ANALYSIS_FEATURES = [
   "cta",
 ] as const;
 
+export const TRANSCRIPT_ANALYSIS_FRAMEWORK_COMPONENTS = {
+  pas: ["pas-problem", "pas-agitation", "pas-solution"],
+  bbb: ["bbb-claim", "bbb-reason", "bbb-example"],
+  none: [],
+} as const satisfies Record<TranscriptAnalysisFramework, readonly TranscriptAnalysisFrameworkComponent[]>;
+
 export type TranscriptAnalysisResponse = {
   framework: TranscriptAnalysisFramework;
+  frameworkEvidence: TranscriptAnalysisFrameworkEvidence[];
   findings: TranscriptAnalysisFinding[];
 };
 
@@ -144,6 +158,7 @@ export function createTranscriptAnalysis(
     status: "queued",
     attempts: 0,
     framework: "none",
+    frameworkEvidence: [],
     findings: [],
     chunks: [],
     textLength: source.text.length,
@@ -159,6 +174,19 @@ export function validateTranscriptAnalysisSettlement(result: import("./contracts
   }
   if (!result.framework || !result.findings || !result.chunks || result.textLength !== text.length || result.complete === undefined) {
     throw new Error("A complete analysis needs framework, findings, chunk coverage and text length.");
+  }
+  const frameworkEvidence = result.frameworkEvidence ?? [];
+  const expectedComponents = TRANSCRIPT_ANALYSIS_FRAMEWORK_COMPONENTS[result.framework];
+  if (expectedComponents.some((component) => !frameworkEvidence.some((item) => item.component === component))) {
+    throw new Error("A PAS or BBB framework needs literal evidence for every component.");
+  }
+  if (frameworkEvidence.some((item) => !expectedComponents.includes(item.component as never))) {
+    throw new Error("Framework evidence does not belong to the selected framework.");
+  }
+  for (const item of frameworkEvidence) {
+    if (!Number.isInteger(item.start) || !Number.isInteger(item.end) || item.start < 0 || item.end <= item.start || text.slice(item.start, item.end) !== item.quote) {
+      throw new Error("Analysis contains framework evidence outside the selected text.");
+    }
   }
   if (result.findings.length > 320) throw new Error("Analysis has too many findings.");
   for (const finding of result.findings) {
@@ -200,8 +228,26 @@ export function parseTranscriptAnalysisResponse(value: unknown, text: string): T
   if (input.framework !== "pas" && input.framework !== "bbb" && input.framework !== "none") {
     throw new Error("Analysis response has an invalid framework.");
   }
+  if (!Array.isArray(input.frameworkEvidence)) throw new Error("Analysis response needs a framework evidence list.");
   if (!Array.isArray(input.findings)) throw new Error("Analysis response needs a findings list.");
+  if (input.frameworkEvidence.length > 12) throw new Error("Analysis response has too much framework evidence.");
   if (input.findings.length > 40) throw new Error("Analysis response has too many findings.");
+  const expectedComponents = TRANSCRIPT_ANALYSIS_FRAMEWORK_COMPONENTS[input.framework];
+  const frameworkEvidence = input.frameworkEvidence.map((raw, index) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`Framework evidence ${index + 1} must be an object.`);
+    const item = raw as Record<string, unknown>;
+    if (!expectedComponents.includes(item.component as never)) throw new Error(`Framework evidence ${index + 1} has an invalid component.`);
+    const explanation = boundedText(item.explanation, 600);
+    const quote = typeof item.quote === "string" ? item.quote : "";
+    const start = item.start;
+    const end = item.end;
+    if (!explanation || !quote) throw new Error(`Framework evidence ${index + 1} needs explanation and quote.`);
+    if (typeof start !== "number" || typeof end !== "number" || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > text.length || text.slice(start, end) !== quote) {
+      throw new Error(`Framework evidence ${index + 1} quote is not literal source text.`);
+    }
+    return { component: item.component, explanation, quote, start, end } as TranscriptAnalysisFrameworkEvidence;
+  });
+  if (input.framework !== "none" && frameworkEvidence.length === 0) throw new Error("A PAS or BBB framework assignment needs literal component evidence.");
   const findings = input.findings.map((raw, index) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`Finding ${index + 1} must be an object.`);
     const item = raw as Record<string, unknown>;
@@ -219,11 +265,11 @@ export function parseTranscriptAnalysisResponse(value: unknown, text: string): T
     if (text.slice(start, end) !== quote) throw new Error(`Finding ${index + 1} quote is not literal source text.`);
     return { feature: item.feature, explanation, quote, start, end } as TranscriptAnalysisFinding;
   });
-  return { framework: input.framework, findings };
+  return { framework: input.framework, frameworkEvidence, findings };
 }
 
 export function timecodeForFinding(
-  finding: TranscriptAnalysisFinding,
+  finding: Pick<TranscriptAnalysisFinding, "quote" | "start" | "end">,
   analyzedText: string,
   originalText: string,
   segments: readonly TranscriptSegment[] = [],
@@ -293,7 +339,16 @@ export function parseTranscriptAnalysisAction(value: unknown): TranscriptAnalysi
 export type TranscriptAnalysisView = {
   status: "empty" | "queued" | "running" | "complete" | "failed" | "stale";
   analysis?: TranscriptAnalysis;
+  previousResult?: TranscriptAnalysis;
 };
+
+export function canStartTranscriptAnalysis(status: TranscriptAnalysisView["status"]) {
+  return status === "empty" || status === "queued" || status === "failed" || status === "stale";
+}
+
+export function shouldRefreshTranscriptAnalysis(status: TranscriptAnalysisView["status"]) {
+  return status === "queued" || status === "running";
+}
 
 /** Picks the current job, while retaining the newest older result as visible stale evidence. */
 export function transcriptAnalysisView(
@@ -305,6 +360,7 @@ export function transcriptAnalysisView(
   if (!source) return { status: "empty" };
   const hash = hashTranscriptText(source.text);
   const current = ordered.find((item) => item.textHash === hash && item.analysisVersion === TRANSCRIPT_ANALYSIS_VERSION);
-  if (current) return { status: current.status, analysis: current };
-  return ordered[0] ? { status: "stale", analysis: ordered[0] } : { status: "empty" };
+  const previousResult = ordered.find((item) => item.id !== current?.id && item.status === "complete");
+  if (current) return { status: current.status, analysis: current, ...(previousResult ? { previousResult } : {}) };
+  return previousResult ? { status: "stale", analysis: previousResult } : { status: "empty" };
 }

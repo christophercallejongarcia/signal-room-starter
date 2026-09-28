@@ -1,9 +1,10 @@
-const MAX_TEXT = 24_000;
+const MAX_TEXT = 32_000;
+const MAX_SOURCES = 20;
 
 export function validatePatternDiscoveryRequest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Pattern discovery request must be an object.");
   if (value.action === "hypothesize") {
-    if (!Array.isArray(value.sources) || value.sources.length < 1 || value.sources.length > 100) throw new Error("sources must contain between 1 and 100 Reels.");
+    if (!Array.isArray(value.sources) || value.sources.length < 1 || value.sources.length > MAX_SOURCES) throw new Error(`sources must contain between 1 and ${MAX_SOURCES} Reels.`);
     return { action: "hypothesize", sources: value.sources.map((source) => {
       if (!source || typeof source.signalId !== "string" || typeof source.text !== "string" || !source.text.trim() || source.text.length > MAX_TEXT) throw new Error("Each source needs a bounded signalId and text.");
       return { signalId: source.signalId.slice(0, 200), text: source.text };

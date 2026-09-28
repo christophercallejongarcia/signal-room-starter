@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chunkTranscript, createTranscriptAnalysis, hashTranscriptText, parseTranscriptAnalysisAction, parseTranscriptAnalysisResponse, transcriptAnalysisView, timecodeForFinding, validateTranscriptAnalysisSettlement } from "../lib/transcript-analysis.ts";
+import { canStartTranscriptAnalysis, chunkTranscript, createTranscriptAnalysis, hashTranscriptText, parseTranscriptAnalysisAction, parseTranscriptAnalysisResponse, shouldRefreshTranscriptAnalysis, transcriptAnalysisView, timecodeForFinding, validateTranscriptAnalysisSettlement } from "../lib/transcript-analysis.ts";
 import { enqueueTranscriptAnalyses, TRANSCRIPT_ANALYSIS_CATCH_UP_INSPECTION_LIMIT } from "../lib/transcript-analysis-run.ts";
 
 test("hashes the exact transcript text with SHA-256", () => {
@@ -13,7 +13,8 @@ test("hashes the exact transcript text with SHA-256", () => {
 test("accepts only literal findings inside the supplied transcript", () => {
   const text = "Hook zuerst. Beweis folgt.";
   const parsed = parseTranscriptAnalysisResponse({
-    framework: "pas",
+    framework: "none",
+    frameworkEvidence: [],
     findings: [{ feature: "hook", explanation: "Der Einstieg.", quote: "Hook zuerst.", start: 0, end: 12 }],
   }, text);
 
@@ -25,9 +26,18 @@ test("accepts only literal findings inside the supplied transcript", () => {
     end: 12,
   });
   assert.throws(() => parseTranscriptAnalysisResponse({
-    framework: "pas",
+    framework: "none",
+    frameworkEvidence: [],
     findings: [{ feature: "hook", explanation: "Erfunden.", quote: "Nicht im Text", start: 0, end: 13 }],
   }, text), /literal|quote|position/i);
+});
+
+test("rejects a PAS or BBB assignment without its own literal evidence", () => {
+  assert.throws(() => parseTranscriptAnalysisResponse({
+    framework: "pas",
+    frameworkEvidence: [],
+    findings: [],
+  }, "Problem. Zuspitzung. Lösung."), /framework.*evidence|beleg|component/i);
 });
 
 test("chunks preserve Unicode text and contiguous positions", () => {
@@ -173,11 +183,36 @@ test("Reel view marks an older complete analysis stale after the working copy ch
   assert.equal(view.analysis.id, old.id);
 });
 
+test("Reel view keeps the last valid result visible while the current text is queued", () => {
+  const originalSignal = { id: "signal-history", format: "reel", transcript: "Alte gültige Fassung." };
+  const previous = createTranscriptAnalysis(originalSignal, "2026-09-09T10:00:00.000Z", "run-previous");
+  previous.status = "complete";
+  previous.complete = true;
+  previous.completedAt = "2026-09-09T10:01:00.000Z";
+  const currentSignal = { ...originalSignal, transcriptWorkingCopy: "Neue Arbeitsfassung." };
+  const current = createTranscriptAnalysis(currentSignal, "2026-09-10T10:00:00.000Z", "run-current");
+
+  const view = transcriptAnalysisView(currentSignal, [current, previous]);
+  assert.equal(view.status, "queued");
+  assert.equal(view.analysis.id, current.id);
+  assert.equal(view.previousResult.id, previous.id);
+});
+
+test("queued analyses offer a manual start and queued or running jobs refresh", () => {
+  assert.equal(canStartTranscriptAnalysis("queued"), true);
+  assert.equal(canStartTranscriptAnalysis("running"), false);
+  assert.equal(canStartTranscriptAnalysis("complete"), false);
+  assert.equal(shouldRefreshTranscriptAnalysis("queued"), true);
+  assert.equal(shouldRefreshTranscriptAnalysis("running"), true);
+  assert.equal(shouldRefreshTranscriptAnalysis("failed"), false);
+});
+
 test("storage settlement validation rejects forged positions and false full coverage", () => {
   const base = {
     status: "complete",
     now: "2026-09-10T10:00:00.000Z",
-    framework: "pas",
+    framework: "none",
+    frameworkEvidence: [],
     findings: [{ feature: "hook", explanation: "Belegt", quote: "Hook", start: 0, end: 4 }],
     chunks: [{ index: 0, start: 0, end: 10, status: "missing" }],
     textLength: 10,

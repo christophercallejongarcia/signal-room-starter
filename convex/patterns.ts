@@ -2,6 +2,7 @@ import { env, internalMutation, mutation, query, type MutationCtx } from "./_gen
 import { ConvexError, v } from "convex/values";
 import { patternEvidenceFields, patternFields, patternRunFields } from "./schema";
 import type { SavePatternComparison } from "../lib/contracts";
+import { validateCurrentPatternEvidence } from "../lib/pattern-comparison-validation";
 
 const publicRow = <T extends { _id: unknown; _creationTime: number }>(row: T) => {
   const { _id, _creationTime, ...value } = row;
@@ -28,6 +29,20 @@ async function saveComparison(ctx: MutationCtx, args: SavePatternComparison) {
   if (args.evidence.length > 100) throw new Error("A Pattern run may store at most 100 evidence rows.");
   const existingRun = await ctx.db.query("patternComparisonRuns").withIndex("by_external_id", (q) => q.eq("id", args.run.id)).unique();
   if (!existingRun) {
+    for (const item of args.evidence) {
+      if (item.verdict === "unknown") continue;
+      const [signal, analysis] = await Promise.all([
+        ctx.db.query("signals").withIndex("by_external_id", (q) => q.eq("id", item.signalId)).unique(),
+        item.analysisId
+          ? ctx.db.query("transcriptAnalyses").withIndex("by_external_id", (q) => q.eq("id", item.analysisId!)).unique()
+          : null,
+      ]);
+      validateCurrentPatternEvidence(
+        [item],
+        signal ? [publicRow(signal)] : [],
+        analysis ? [publicRow(analysis)] : [],
+      );
+    }
     const existingPattern = await ctx.db.query("patterns").withIndex("by_external_id", (q) => q.eq("id", args.pattern.id)).unique();
     if (existingPattern) await ctx.db.patch(existingPattern._id, { ...args.pattern, status: existingPattern.status === "candidate" && args.pattern.status === "hypothesis" ? "candidate" : args.pattern.status, createdAt: existingPattern.createdAt });
     else await ctx.db.insert("patterns", args.pattern);

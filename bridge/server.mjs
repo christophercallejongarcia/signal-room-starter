@@ -46,8 +46,8 @@ import {
 
 const HOST = "127.0.0.1";
 const PORT = Number.parseInt(process.env.BRIDGE_PORT || "3211", 10);
-/** Room for a 20 000 character transcript in UTF-8 plus its evidence packet. */
-const MAX_BODY_BYTES = 128 * 1024;
+/** Room for 20 complete 32k Pattern source transcripts in worst-case UTF-8 plus JSON overhead. */
+const MAX_BODY_BYTES = 3 * 1024 * 1024;
 const allowedOrigins = new Set(
   (process.env.BRIDGE_ALLOWED_ORIGINS || "http://localhost:3000,http://127.0.0.1:3000")
     .split(",")

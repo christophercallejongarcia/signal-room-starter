@@ -207,10 +207,19 @@ export type TranscriptSignalPatch = TranscriptPatch;
 
 export type TranscriptAnalysisFeature = "hook" | "tension" | "loop" | "proof" | "example" | "transition" | "rhythm" | "cta";
 export type TranscriptAnalysisFramework = "pas" | "bbb" | "none";
+export type TranscriptAnalysisFrameworkComponent = "pas-problem" | "pas-agitation" | "pas-solution" | "bbb-claim" | "bbb-reason" | "bbb-example";
 export type TranscriptAnalysisTextVersion = "original" | "working";
 export type TranscriptAnalysisStatus = "queued" | "running" | "complete" | "failed";
 export type TranscriptAnalysisFinding = {
   feature: TranscriptAnalysisFeature;
+  explanation: string;
+  quote: string;
+  start: number;
+  end: number;
+  timecode?: Pick<TranscriptSegment, "start" | "end">;
+};
+export type TranscriptAnalysisFrameworkEvidence = {
+  component: TranscriptAnalysisFrameworkComponent;
   explanation: string;
   quote: string;
   start: number;
@@ -235,6 +244,8 @@ export type TranscriptAnalysis = {
   completedAt?: string;
   error?: string;
   framework: TranscriptAnalysisFramework;
+  /** Optional only so analyses stored before component evidence was introduced remain readable. */
+  frameworkEvidence?: TranscriptAnalysisFrameworkEvidence[];
   findings: TranscriptAnalysisFinding[];
   chunks: TranscriptAnalysisChunkState[];
   textLength: number;
@@ -244,6 +255,7 @@ export type SettleTranscriptAnalysis = {
   status: "complete" | "failed";
   now: string;
   framework?: TranscriptAnalysisFramework;
+  frameworkEvidence?: TranscriptAnalysisFrameworkEvidence[];
   findings?: TranscriptAnalysisFinding[];
   chunks?: TranscriptAnalysisChunkState[];
   textLength?: number;

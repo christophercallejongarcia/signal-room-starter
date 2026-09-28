@@ -11,6 +11,7 @@ import { mergeHashtagPosts } from "../../hashtag-posts.ts";
 import { mergeTranscriptDictionaryEntries, normalizeTranscriptDictionary, removeTranscriptDictionaryEntry } from "../../transcript-dictionary.ts";
 import { applyCoverUpdate } from "../../cover-lab.ts";
 import { analysisText, createTranscriptAnalysis, hashTranscriptText, validateTranscriptAnalysisSettlement, TRANSCRIPT_ANALYSIS_CLAIM_TIMEOUT_MS, TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS, type TranscriptAnalysisChunkState } from "../../transcript-analysis.ts";
+import { validateCurrentPatternEvidence } from "../../pattern-comparison-validation.ts";
 
 type Store = {
   creators: Creator[];
@@ -260,10 +261,11 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
       const store = await load();
       const signal = store.signals.find((candidate) => candidate.id === signalId);
       if (!signal) return null;
+      const expected = createTranscriptAnalysis(signal, now);
       queueForSignal(store, signal, now);
-      const analysis = store.transcriptAnalyses
-        .filter((candidate) => candidate.signalId === signalId)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
+      const analysis = expected
+        ? store.transcriptAnalyses.find((candidate) => candidate.id === expected.id) ?? null
+        : null;
       await save(store);
       return analysis;
     });
@@ -272,6 +274,7 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
     return serialized(async () => {
       const store = await load();
       const nowMs = Date.parse(now);
+      let expiredAttemptChanged = false;
       for (let index = 0; index < store.transcriptAnalyses.length; index += 1) {
         const analysis = store.transcriptAnalyses[index];
         if (analysis.status === "running" && analysis.attempts >= TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS && Date.parse(analysis.claimExpiresAt ?? "") <= nowMs) {
@@ -283,6 +286,7 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
             claimedAt: undefined,
             claimExpiresAt: undefined,
           };
+          expiredAttemptChanged = true;
         }
       }
       const candidate = [...store.transcriptAnalyses]
@@ -292,7 +296,10 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
           analysis.attempts < TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS
           && (analysis.status === "queued" || (analysis.status === "running" && Number.isFinite(Date.parse(analysis.claimExpiresAt ?? "")) && Date.parse(analysis.claimExpiresAt!) <= nowMs))
         ));
-      if (!candidate) return null;
+      if (!candidate) {
+        if (expiredAttemptChanged) await save(store);
+        return null;
+      }
       const claimed = {
         ...candidate,
         status: "running" as const,
@@ -322,6 +329,7 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
         ...current,
         status: result.status,
         ...(result.framework === undefined ? {} : { framework: result.framework }),
+        ...(result.frameworkEvidence === undefined ? {} : { frameworkEvidence: result.frameworkEvidence }),
         ...(result.findings === undefined ? {} : { findings: result.findings }),
         ...(result.chunks === undefined ? {} : { chunks: result.chunks as TranscriptAnalysisChunkState[] }),
         ...(result.textLength === undefined ? {} : { textLength: result.textLength }),
@@ -370,6 +378,7 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
         const ids = new Set([...existingRun.positiveEvidenceIds, ...existingRun.negativeEvidenceIds, ...existingRun.unknownEvidenceIds]);
         return { pattern, run: existingRun, evidence: store.patternEvidence.filter((item) => ids.has(item.id)) };
       }
+      validateCurrentPatternEvidence(result.evidence, store.signals, store.transcriptAnalyses);
       const patternIndex = store.patterns.findIndex((item) => item.id === result.pattern.id);
       if (patternIndex >= 0) {
         const existing = store.patterns[patternIndex];
