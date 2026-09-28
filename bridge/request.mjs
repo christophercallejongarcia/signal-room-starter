@@ -524,7 +524,7 @@ export function buildCoverPrompt(request) {
 export function buildCoverImagePrompt(request, packageInput) {
   const spec = COVER_FORMATS[request.format];
   const treatment = request.treatment === "face"
-    ? "A human face may appear only if it adds meaning, with a natural readable expression."
+    ? "The person is Chris. The attached photos are real stills of him: keep his identity exactly (face shape, eyes, hair, beard, skin tone) with one natural, readable expression. Never invent a different person."
     : "No people, faces or hands. Use one clear proof object or visual metaphor.";
   return [
     "Generate one finished raster cover image with the built-in GPT Image capability.",

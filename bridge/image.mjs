@@ -1,11 +1,18 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { codexAuthState } from "./auth.mjs";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const IMAGE_TIMEOUT_MS = 180_000;
+const IMAGE_TIMEOUT_MS = 240_000;
+/**
+ * One fixed workspace for every render. Codex records each working directory
+ * it runs in as trusted in ~/.codex/config.toml, so a fresh temp folder per
+ * render would add an entry every time. Each render owns one file name in it.
+ */
+const WORKSPACE = path.join(os.tmpdir(), "signal-room-image-workspace");
 const imageOutputSchema = {
   type: "object",
   properties: { saved: { type: "boolean" } },
@@ -24,15 +31,18 @@ function sniffImageType(bytes) {
 /**
  * Uses the Codex image-generation capability in an isolated temporary
  * workspace. The Bridge receives bytes and the app decides where to persist
- * them, so a model-generated path never becomes an app path.
+ * them, so a model-generated path never becomes an app path. `images` are
+ * validated local files (face stills, reference thumbnails) the image model
+ * receives as input, in order.
  */
-export async function renderCoverWithCodex(prompt) {
+export async function renderCoverWithCodex(prompt, images = []) {
   if (codexAuthState() === "logged-out") {
     throw Object.assign(new Error("Codex is not logged in. Run `codex login` in a terminal."), { status: 503 });
   }
 
-  const directory = await mkdtemp(path.join(os.tmpdir(), "signal-room-cover-"));
-  const output = path.join(directory, "cover.png");
+  await mkdir(WORKSPACE, { recursive: true });
+  const name = `cover-${randomUUID()}.png`;
+  const output = path.join(WORKSPACE, name);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
 
@@ -40,15 +50,16 @@ export async function renderCoverWithCodex(prompt) {
     const codex = new Codex({ config: { features: { image_generation: true } } });
     const thread = codex.startThread({
       model: process.env.CODEX_IMAGE_MODEL || process.env.CODEX_MODEL || undefined,
-      workingDirectory: directory,
+      workingDirectory: WORKSPACE,
       sandboxMode: "workspace-write",
       approvalPolicy: "never",
       networkAccessEnabled: false,
       webSearchMode: "disabled",
       skipGitRepoCheck: true,
     });
+    const instruction = `${prompt}\nUse the built-in image_gen tool. Save the selected final PNG exactly to ./${name} in the current workspace. Do not write any other file. Then return {"saved":true}.`;
     await thread.run(
-      `${prompt}\nUse the built-in image_gen tool. Save the selected final PNG exactly to ./cover.png in the current workspace. Do not write any other file. Then return {"saved":true}.`,
+      images.length > 0 ? [{ type: "text", text: instruction }, ...images.map((file) => ({ type: "local_image", path: file }))] : instruction,
       { outputSchema: imageOutputSchema, signal: controller.signal },
     );
     const details = await stat(output).catch(() => null);
@@ -61,6 +72,6 @@ export async function renderCoverWithCodex(prompt) {
     return { mimeType, data: bytes.toString("base64") };
   } finally {
     clearTimeout(timeout);
-    await rm(directory, { recursive: true, force: true });
+    await rm(output, { force: true });
   }
 }

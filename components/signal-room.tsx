@@ -38,6 +38,7 @@ import { CoverImage, formatNumber, formatOutlier, networkName, timeAgo } from "@
 import { ReelDetailPanel, TranscriptStatusBadge } from "@/components/reel-detail";
 import { DiscoverFeed } from "@/components/discover-feed";
 import { YoutubeRadar } from "@/components/youtube-radar";
+import { ThumbnailBuilder } from "@/components/thumbnail-builder";
 import { TAB_PARAM, creatorPath, creatorStats } from "@/lib/creator-detail";
 import { rankCorpus, DEMO_NOW, type Ranked } from "@/lib/rank-corpus";
 import { demoCreators, demoHashtagPosts, demoScriptIdeaTitles, demoScripts, demoSignals } from "@/lib/demo-data";
@@ -2745,6 +2746,8 @@ function ThumbnailsView({
         </div>
       </section>
 
+      <ThumbnailBuilder bridge={bridge} onRecheckBridge={onRecheckBridge} />
+
       <section className="panel glow">
         <div className="panel-head">
           <div><p className="kicker">Developed Idea</p><h2>What should this cover promise?</h2><p>The Bridge receives the Idea's storyboard, then creates one focused visual direction per package.</p></div>
@@ -2782,7 +2785,7 @@ function ThumbnailsView({
             <label>Visual treatment</label>
             <div className="option-tiles">
               <button type="button" className={treatment === "faceless" ? "option-tile active" : "option-tile"} onClick={() => setTreatment("faceless")}><strong>Faceless</strong><span>One proof object carries the click.</span></button>
-              <button type="button" className={treatment === "face" ? "option-tile active" : "option-tile"} onClick={() => setTreatment("face")}><strong>With face</strong><span>Use an expression when it adds meaning.</span></button>
+              <button type="button" className={treatment === "face" ? "option-tile active" : "option-tile"} onClick={() => setTreatment("face")}><strong>With face</strong><span>Chris from his real stills, when an expression adds meaning.</span></button>
             </div>
           </div>
         </div>

@@ -8,6 +8,16 @@ import {
   transcriptAnalysisOutputSchema,
   validateTranscriptAnalysisRequest,
 } from "./transcript-analysis.mjs";
+import {
+  assertImageFiles,
+  buildThumbnailImageInput,
+  buildThumbnailPlanInput,
+  normalizeThumbnailPlan,
+  normalizeThumbnailVariant,
+  thumbnailPlanOutputSchema,
+  validateFaces,
+  validateThumbnailRequest,
+} from "./thumbnails.mjs";
 import { buildPatternDiscoveryPrompt, patternEvaluationOutputSchema, patternHypothesisOutputSchema, validatePatternDiscoveryRequest } from "./pattern-discovery.mjs";
 import {
   briefingOutputSchema,
@@ -94,7 +104,7 @@ function createCodex() {
   return new Codex();
 }
 
-/** One Codex turn under the read-only sandbox. The routes differ only in prompt and schema. */
+/** One Codex turn under the read-only sandbox. The routes differ only in prompt (text or text plus images) and schema. */
 async function runCodex(prompt, outputSchema) {
   if (codexAuthState() === "logged-out") {
     throw Object.assign(new Error("Codex is not logged in. Run `codex login` in a terminal."), { status: 503 });
@@ -240,21 +250,50 @@ const routes = new Map([
       failure: "The local Codex cover run failed.",
       run: async (input) => {
         const request = validateCoverRequest(input);
+        // "face" renders Chris from his real stills; the app sends them, never a random face.
+        const faces = request.treatment === "face" ? validateFaces(input.faces, { required: true }).map((face) => face.path) : [];
+        await assertImageFiles(faces);
         const descriptions = normalizeCoverPackages(
           await runCodex(buildCoverPrompt(request), coverOutputSchema(request.count)),
           request,
         );
-        const packages = [];
-        for (const description of descriptions) {
-          const image = await renderCoverWithCodex(buildCoverImagePrompt(request, description));
-          packages.push({ ...description, image });
-        }
+        // Parallel: three sequential renders outlast the app's five-minute fetch window.
+        const packages = await Promise.all(descriptions.map(async (description) => ({
+          ...description,
+          image: await renderCoverWithCodex(buildCoverImagePrompt(request, description), faces),
+        })));
         return {
           format: request.format,
           aspectRatio: COVER_FORMATS[request.format].aspectRatio,
           treatment: request.treatment,
           packages,
         };
+      },
+    },
+  ],
+  [
+    "/v1/thumbnails/plan",
+    {
+      label: "Thumbnail plan",
+      failure: "The local Codex thumbnail plan failed.",
+      run: async (input) => {
+        const request = validateThumbnailRequest(input);
+        await assertImageFiles(request.references.map((reference) => reference.path));
+        return { variants: normalizeThumbnailPlan(await runCodex(buildThumbnailPlanInput(request), thumbnailPlanOutputSchema(request)), request) };
+      },
+    },
+  ],
+  [
+    "/v1/thumbnails/render",
+    {
+      label: "Thumbnail render",
+      failure: "The local Codex thumbnail render failed.",
+      run: async (input) => {
+        const request = validateThumbnailRequest(input);
+        const variant = normalizeThumbnailVariant(input.variant, request, 0);
+        const render = buildThumbnailImageInput(request, variant);
+        await assertImageFiles(render.images);
+        return { image: await renderCoverWithCodex(render.text, render.images) };
       },
     },
   ],
