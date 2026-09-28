@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { CreatorCandidate, YoutubeSearchTerm, YoutubeVideo } from "../../contracts";
 import type { Briefing, Creator, FormatReview, HashtagPost, HookRun, Idea, Pattern, PatternComparisonRun, PatternEvidence, Run, SavePatternComparison, Script, ScriptPatch, ScriptRunClaimOptions, SignalRecord, Slate, StorageAdapter, TranscriptAnalysis, TranscriptDictionaryEntry, TranscriptSignalPatch, SettleTranscriptAnalysis } from "../../contracts";
 import { BRIEFING_HISTORY, HOOK_RUN_HISTORY, SLATE_HISTORY } from "../../config.ts";
 import { withSavedAt } from "../../discover-filter.ts";
@@ -12,6 +13,8 @@ import { mergeTranscriptDictionaryEntries, normalizeTranscriptDictionary, remove
 import { applyCoverUpdate } from "../../cover-lab.ts";
 import { analysisText, createTranscriptAnalysis, hashTranscriptText, validateTranscriptAnalysisSettlement, TRANSCRIPT_ANALYSIS_CLAIM_TIMEOUT_MS, TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS, type TranscriptAnalysisChunkState } from "../../transcript-analysis.ts";
 import { validateCurrentPatternEvidence } from "../../pattern-comparison-validation.ts";
+import { claimCandidate, decideCandidate, mergeCandidate, settleCandidate, sortCandidates } from "../../candidates.ts";
+import { matchesOutlierQuery, mergeYoutubeVideo, normalizeOutlierQuery, sortOutliers } from "../../youtube-videos.ts";
 
 type Store = {
   creators: Creator[];
@@ -29,6 +32,9 @@ type Store = {
   patterns: Pattern[];
   patternEvidence: PatternEvidence[];
   patternComparisonRuns: PatternComparisonRun[];
+  youtubeVideos: YoutubeVideo[];
+  youtubeSearchTerms: YoutubeSearchTerm[];
+  candidates: CreatorCandidate[];
 };
 const STORE_PATH = path.join(process.cwd(), "data", "store.json");
 /** Runs kept in the file store; Convex keeps everything. */
@@ -48,7 +54,10 @@ const MAX_SLATES = 90;
 const MAX_PATTERNS = 200;
 const MAX_PATTERN_EVIDENCE = 2_000;
 const MAX_PATTERN_RUNS = 20;
-const EMPTY: Store = { creators: [], signals: [], transcriptDictionary: [], hashtagPosts: [], runs: [], ideas: [], scripts: [], formatReviews: [], hookRuns: [], briefings: [], slates: [], transcriptAnalyses: [], patterns: [], patternEvidence: [], patternComparisonRuns: [] };
+/** Measured YouTube videos kept in the file store; the oldest measurements fall off first. */
+const MAX_YOUTUBE_VIDEOS = 5_000;
+const MAX_CANDIDATES = 1_000;
+const EMPTY: Store = { creators: [], signals: [], transcriptDictionary: [], hashtagPosts: [], runs: [], ideas: [], scripts: [], formatReviews: [], hookRuns: [], briefings: [], slates: [], transcriptAnalyses: [], patterns: [], patternEvidence: [], patternComparisonRuns: [], youtubeVideos: [], youtubeSearchTerms: [], candidates: [] };
 
 function signalKey(signal: Pick<SignalRecord, "id" | "externalId">) {
   return signal.externalId ?? signal.id;
@@ -93,6 +102,9 @@ async function load(): Promise<Store> {
     patterns: parsed.patterns ?? [],
     patternEvidence: parsed.patternEvidence ?? [],
     patternComparisonRuns: parsed.patternComparisonRuns ?? [],
+    youtubeVideos: parsed.youtubeVideos ?? [],
+    youtubeSearchTerms: parsed.youtubeSearchTerms ?? [],
+    candidates: parsed.candidates ?? [],
   };
   if (migrated.reset > 0) await save(store);
   return store;
@@ -618,6 +630,109 @@ export const fileStorage: StorageAdapter & { upsertCreator(creator: Creator): Pr
       store.scripts[index] = moved;
       await save(store);
       return moved;
+    });
+  },
+  async saveYoutubeVideos(videos) {
+    return serialized(async () => {
+      const store = await load();
+      const byId = new Map(store.youtubeVideos.map((video) => [video.id, video]));
+      const seen = new Set<string>();
+      let inserted = 0;
+      let updated = 0;
+      for (const video of videos) {
+        const existing = byId.get(video.id) ?? null;
+        byId.set(video.id, mergeYoutubeVideo(existing, video));
+        if (seen.has(video.id)) continue;
+        seen.add(video.id);
+        if (existing) updated += 1;
+        else inserted += 1;
+      }
+      store.youtubeVideos = [...byId.values()].sort((a, b) => b.measuredAt.localeCompare(a.measuredAt)).slice(0, MAX_YOUTUBE_VIDEOS);
+      await save(store);
+      return { inserted, updated };
+    });
+  },
+  async listYoutubeOutliers(query = {}) {
+    const normalized = normalizeOutlierQuery(query);
+    return sortOutliers((await load()).youtubeVideos.filter((video) => matchesOutlierQuery(video, normalized))).slice(0, normalized.limit);
+  },
+  async listYoutubeSearchTerms() {
+    return [...(await load()).youtubeSearchTerms].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  },
+  async saveYoutubeSearchTerm(term) {
+    await serialized(async () => {
+      const store = await load();
+      store.youtubeSearchTerms = [...store.youtubeSearchTerms.filter((item) => item.id !== term.id), term];
+      await save(store);
+    });
+  },
+  async removeYoutubeSearchTerm(id) {
+    return serialized(async () => {
+      const store = await load();
+      const before = store.youtubeSearchTerms.length;
+      store.youtubeSearchTerms = store.youtubeSearchTerms.filter((item) => item.id !== id);
+      if (store.youtubeSearchTerms.length === before) return false;
+      await save(store);
+      return true;
+    });
+  },
+  async listCandidates(options = {}) {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
+    const rows = (await load()).candidates
+      .filter((candidate) => !options.network || candidate.network === options.network)
+      .filter((candidate) => !options.decision || candidate.decision === options.decision);
+    return sortCandidates(rows).slice(0, limit);
+  },
+  async getCandidate(key) {
+    return (await load()).candidates.find((candidate) => candidate.key === key) ?? null;
+  },
+  async mergeCandidates(candidates) {
+    return serialized(async () => {
+      const store = await load();
+      const byKey = new Map(store.candidates.map((candidate) => [candidate.key, candidate]));
+      let inserted = 0;
+      let updated = 0;
+      for (const incoming of candidates) {
+        const existing = byKey.get(incoming.key) ?? null;
+        byKey.set(incoming.key, mergeCandidate(existing, incoming));
+        if (existing) updated += 1;
+        else inserted += 1;
+      }
+      store.candidates = [...byKey.values()].slice(-MAX_CANDIDATES);
+      await save(store);
+      return { inserted, updated };
+    });
+  },
+  async decideCandidate(key, decision, now) {
+    return serialized(async () => {
+      const store = await load();
+      const index = store.candidates.findIndex((candidate) => candidate.key === key);
+      if (index < 0) return null;
+      store.candidates[index] = decideCandidate(store.candidates[index], decision, now);
+      await save(store);
+      return store.candidates[index];
+    });
+  },
+  async claimCandidate(key, claimId, now) {
+    return serialized(async () => {
+      const store = await load();
+      const index = store.candidates.findIndex((candidate) => candidate.key === key);
+      if (index < 0) return null;
+      store.candidates[index] = claimCandidate(store.candidates[index], claimId, now);
+      await save(store);
+      return store.candidates[index];
+    });
+  },
+  async settleCandidate(key, claimId, result) {
+    return serialized(async () => {
+      const store = await load();
+      const index = store.candidates.findIndex((candidate) => candidate.key === key);
+      if (index < 0) return null;
+      const settled = settleCandidate(store.candidates[index], claimId, result);
+      if (!settled) return null;
+      store.candidates[index] = settled;
+      await save(store);
+      return settled;
     });
   },
 };

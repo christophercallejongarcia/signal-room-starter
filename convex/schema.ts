@@ -4,7 +4,7 @@ import { v } from "convex/values";
 /** Shape of one logged collection pass; shared with convex/runs.ts so the validator is declared once. */
 export const runFields = {
   id: v.string(),
-  kind: v.union(v.literal("backfill"), v.literal("refresh"), v.literal("hashtag-sweep"), v.literal("transcript")),
+  kind: v.union(v.literal("backfill"), v.literal("refresh"), v.literal("hashtag-sweep"), v.literal("transcript"), v.literal("youtube-search")),
   status: v.union(v.literal("ok"), v.literal("partial"), v.literal("failed")),
   startedAt: v.string(),
   finishedAt: v.string(),
@@ -26,6 +26,98 @@ export const runFields = {
   transcripts: v.optional(v.object({ added: v.number(), silent: v.number(), missing: v.number(), failed: v.optional(v.number()) })),
   hashtagsChecked: v.optional(v.number()),
   costLimitUsd: v.optional(v.number()),
+  youtubeQuota: v.optional(
+    v.object({
+      units: v.number(),
+      calls: v.object({ search: v.number(), videos: v.number(), channels: v.number(), playlistItems: v.number() }),
+    }),
+  ),
+  queries: v.optional(v.array(v.string())),
+};
+
+const market = v.union(v.literal("de"), v.literal("en"));
+const youtubeTopic = v.union(v.literal("claude"), v.literal("agents"), v.literal("ai-os"), v.literal("automation"));
+
+/** One measured YouTube video: the read model of the Outlier-Radar and the Titel- and Thumbnail-Builder. */
+export const youtubeVideoFields = {
+  id: v.string(),
+  videoId: v.string(),
+  channelId: v.string(),
+  channelTitle: v.string(),
+  channelHandle: v.optional(v.string()),
+  title: v.string(),
+  description: v.optional(v.string()),
+  thumbnailUrl: v.optional(v.string()),
+  url: v.string(),
+  publishedAt: v.string(),
+  durationSeconds: v.number(),
+  views: v.number(),
+  likes: v.number(),
+  comments: v.number(),
+  subscribers: v.number(),
+  channelMedian: v.number(),
+  baselineCount: v.number(),
+  factor: v.number(),
+  viewsPerSubscriber: v.number(),
+  viewsPerDay: v.number(),
+  market,
+  topics: v.array(youtubeTopic),
+  queries: v.array(v.string()),
+  source: v.union(v.literal("search"), v.literal("watchlist")),
+  measuredAt: v.string(),
+  firstSeenAt: v.string(),
+};
+
+export const youtubeSearchTermFields = {
+  id: v.string(),
+  term: v.string(),
+  market,
+  topic: youtubeTopic,
+  createdAt: v.string(),
+};
+
+export const candidateDecision = v.union(v.literal("proposed"), v.literal("selected"), v.literal("accepted"), v.literal("rejected"), v.literal("deferred"));
+
+/** A creator suggested for the watchlist (P4-05), with its intake claim (P4-09). Bounded arrays only. */
+export const candidateFields = {
+  key: v.string(),
+  network: v.union(v.literal("youtube"), v.literal("instagram"), v.literal("tiktok")),
+  externalId: v.string(),
+  handle: v.string(),
+  name: v.string(),
+  url: v.optional(v.string()),
+  avatarUrl: v.optional(v.string()),
+  audience: v.number(),
+  market,
+  reason: v.string(),
+  sources: v.array(v.object({
+    kind: v.union(v.literal("youtube-search"), v.literal("manual"), v.literal("dossier")),
+    label: v.string(),
+    runId: v.optional(v.string()),
+    at: v.string(),
+  })),
+  evidence: v.array(v.object({
+    id: v.string(),
+    title: v.string(),
+    url: v.string(),
+    thumbnailUrl: v.optional(v.string()),
+    factor: v.number(),
+    views: v.number(),
+    publishedAt: v.string(),
+  })),
+  bestFactor: v.number(),
+  outlierCount: v.number(),
+  channelMedian: v.number(),
+  baselineCount: v.number(),
+  dataAsOf: v.string(),
+  decision: candidateDecision,
+  decidedAt: v.optional(v.string()),
+  creatorId: v.optional(v.string()),
+  claimId: v.optional(v.string()),
+  claimedAt: v.optional(v.string()),
+  acceptError: v.optional(v.string()),
+  createdAt: v.string(),
+  updatedAt: v.string(),
 };
 
 /** Patch contract for a manual transcript flow. Null removes an optional Signal field. */
@@ -551,4 +643,14 @@ export default defineSchema({
   runs: defineTable(runFields)
     .index("by_external_id", ["id"])
     .index("by_startedAt", ["startedAt"]),
+  youtubeVideos: defineTable(youtubeVideoFields)
+    .index("by_external_id", ["id"])
+    .index("by_factor", ["factor"]),
+  youtubeSearchTerms: defineTable(youtubeSearchTermFields)
+    .index("by_external_id", ["id"])
+    .index("by_createdAt", ["createdAt"]),
+  creatorCandidates: defineTable(candidateFields)
+    .index("by_key", ["key"])
+    .index("by_bestFactor", ["bestFactor"])
+    .index("by_decision_and_bestFactor", ["decision", "bestFactor"]),
 });

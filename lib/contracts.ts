@@ -125,6 +125,14 @@ export type RankedSignal = SignalRecord & {
   outlier: number;
   /** plays relative to the creator's own median over the retained corpus. */
   channelRelative: number;
+  /** YouTube only: median views of the channel's last long-form videos the factor divides by. */
+  channelMedian?: number;
+  /** YouTube only: long-form videos that median was taken over. */
+  baselineCount?: number;
+  /** YouTube only: views per subscriber, 0 when the channel hides its count. */
+  viewsPerSubscriber?: number;
+  /** YouTube only: views per day since publication. */
+  viewsPerDay?: number;
 };
 
 /** Outcome of one cover-cache pass. skipped = already on disk, failed = no file written (retried next refresh). */
@@ -134,6 +142,12 @@ export type CoverCacheResult = { cached: number; skipped: number; failed: number
 export type SaveResult = { inserted: number; updated: number };
 
 export type RunError = { creatorId: string; handle: string; message: string };
+
+/** YouTube Data API calls one pass made, and the quota units they cost (YOUTUBE_QUOTA_COST). */
+export type YoutubeQuota = {
+  units: number;
+  calls: { search: number; videos: number; channels: number; playlistItems: number };
+};
 
 /**
  * Apify usage of one collection pass, summed over its actor runs. computeUnits
@@ -161,7 +175,7 @@ export interface HashtagConnector {
  */
 export type Run = {
   id: string;
-  kind: "backfill" | "refresh" | "hashtag-sweep" | "transcript";
+  kind: "backfill" | "refresh" | "hashtag-sweep" | "transcript" | "youtube-search";
   status: "ok" | "partial" | "failed";
   startedAt: string;
   finishedAt: string;
@@ -182,7 +196,147 @@ export type Run = {
   hashtagsChecked?: number;
   /** The maximum verified dollar cost accepted for a hashtag sweep. */
   costLimitUsd?: number;
+  /** YouTube Data API quota the pass used. Absent when it made no YouTube call. */
+  youtubeQuota?: YoutubeQuota;
+  /** Search terms of a youtube-search run. */
+  queries?: string[];
 };
+
+export type YoutubeTopic = "claude" | "agents" | "ai-os" | "automation";
+
+/** One Suchbegriff of the YouTube Suchlauf. Chris extends the list in Discover. */
+export type YoutubeSearchTerm = {
+  /** Canonical id: market plus the normalised term. */
+  id: string;
+  term: string;
+  market: "de" | "en";
+  topic: YoutubeTopic;
+  createdAt: string;
+};
+
+/**
+ * One measured YouTube video: the read model the Outlier-Radar, the Titel- and
+ * the Thumbnail-Builder share. Written by a Suchlauf (source search) and by the
+ * refresh of a watchlist channel (source watchlist); the newest measurement wins.
+ * All numbers are a snapshot at measuredAt.
+ */
+export type YoutubeVideo = {
+  /** Same id the video carries as a Signal: yt-<videoId>. */
+  id: string;
+  videoId: string;
+  channelId: string;
+  channelTitle: string;
+  /** @handle when the channel has one. */
+  channelHandle?: string;
+  title: string;
+  /** Bounded description excerpt. Untrusted creator text. */
+  description?: string;
+  /** i.ytimg.com link; YouTube thumbnails do not expire. */
+  thumbnailUrl?: string;
+  url: string;
+  publishedAt: string;
+  durationSeconds: number;
+  views: number;
+  likes: number;
+  comments: number;
+  /** Channel subscribers at measuredAt; 0 when hidden. */
+  subscribers: number;
+  /** Median views of the channel's last long-form videos. */
+  channelMedian: number;
+  baselineCount: number;
+  /** views / channelMedian. 0 when the baseline is thinner than YOUTUBE_MIN_BASELINE. */
+  factor: number;
+  viewsPerSubscriber: number;
+  viewsPerDay: number;
+  market: "de" | "en";
+  /** Topics of the search terms that found the video; empty for a watchlist-only video. */
+  topics: YoutubeTopic[];
+  /** Search terms that found the video, bounded. */
+  queries: string[];
+  source: "search" | "watchlist";
+  measuredAt: string;
+  firstSeenAt: string;
+};
+
+/** Filter for the builder-facing Outlier query. */
+export type YoutubeOutlierQuery = {
+  /** Lowest factor, default YOUTUBE_DEFAULT_THRESHOLD. */
+  minFactor?: number;
+  market?: "de" | "en";
+  topic?: YoutubeTopic;
+  /** ISO instant; only videos published at or after it. */
+  publishedAfter?: string;
+  limit?: number;
+};
+
+/**
+ * Where a Kandidat stands (P4-05, P4-09). proposed = waiting for Chris,
+ * selected = Chris chose it and the watchlist intake runs or failed and waits
+ * for a retry, accepted = in the watchlist, rejected and deferred leave the
+ * watchlist untouched.
+ */
+export type CandidateDecision = "proposed" | "selected" | "accepted" | "rejected" | "deferred";
+
+export type CandidateSource = {
+  kind: "youtube-search" | "manual" | "dossier";
+  /** What led here, e.g. the search term. */
+  label: string;
+  runId?: string;
+  at: string;
+};
+
+/** One outlier video that speaks for a Kandidat. */
+export type CandidateEvidence = {
+  id: string;
+  title: string;
+  url: string;
+  thumbnailUrl?: string;
+  factor: number;
+  views: number;
+  publishedAt: string;
+};
+
+/** A creator Signal Room suggests for the watchlist. Nothing is tracked before Chris accepts it. */
+export type CreatorCandidate = {
+  /** Normalised network/handle key, for YouTube the channel id: youtube:<channelId>. */
+  key: string;
+  network: Network;
+  /** Network-side id (YouTube channel id). */
+  externalId: string;
+  handle: string;
+  name: string;
+  url?: string;
+  avatarUrl?: string;
+  audience: number;
+  market: "de" | "en";
+  /** Plain-language reason with the numbers behind it. */
+  reason: string;
+  sources: CandidateSource[];
+  evidence: CandidateEvidence[];
+  bestFactor: number;
+  outlierCount: number;
+  channelMedian: number;
+  baselineCount: number;
+  /** When the numbers above were measured. An older find never overwrites newer numbers. */
+  dataAsOf: string;
+  decision: CandidateDecision;
+  decidedAt?: string;
+  /** Creator id once accepted or linked to an already tracked creator. */
+  creatorId?: string;
+  claimId?: string;
+  claimedAt?: string;
+  /** Bounded reason of the last failed intake; present while decision is selected. */
+  acceptError?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** The decisions Chris sets by hand. accepted only comes from the intake, selected only from its claim. */
+export type ManualCandidateDecision = "proposed" | "rejected" | "deferred";
+
+export type CandidateSettle =
+  | { ok: true; creatorId: string; now: string }
+  | { ok: false; error: string; now: string };
 
 export type TranscriptStatus = "ready" | "silent" | "missing" | "pending" | "failed";
 
@@ -1000,6 +1154,27 @@ export interface StorageAdapter {
   settleScriptRun(id: string, runId: string, result: SettleScriptRun): Promise<Script | null>;
   /** Moves a Script by hand according to the fixed Script status model. */
   moveScript(id: string, status: ScriptStatus, now: string): Promise<Script | null>;
+  /** Upserts measured YouTube videos by id; the newer measuredAt wins, queries and topics merge. */
+  saveYoutubeVideos(videos: YoutubeVideo[]): Promise<SaveResult>;
+  /** YouTube Outlier, strongest factor first, bounded. */
+  listYoutubeOutliers(query?: YoutubeOutlierQuery): Promise<YoutubeVideo[]>;
+  /** Stored Suchbegriffe, oldest first. */
+  listYoutubeSearchTerms(): Promise<YoutubeSearchTerm[]>;
+  /** Adds or replaces one term by id. */
+  saveYoutubeSearchTerm(term: YoutubeSearchTerm): Promise<void>;
+  /** Removes one term; true when it existed. */
+  removeYoutubeSearchTerm(id: string): Promise<boolean>;
+  /** Kandidaten, strongest first, optionally for one network and decision. */
+  listCandidates(options?: { network?: Network; decision?: CandidateDecision; limit?: number }): Promise<CreatorCandidate[]>;
+  getCandidate(key: string): Promise<CreatorCandidate | null>;
+  /** Merges finds into stored Kandidaten (mergeCandidate). Decisions stay as Chris set them. */
+  mergeCandidates(candidates: CreatorCandidate[]): Promise<SaveResult>;
+  /** Sets a manual decision. Throws CandidateConflictError while an intake runs or after acceptance. */
+  decideCandidate(key: string, decision: ManualCandidateDecision, now: string): Promise<CreatorCandidate | null>;
+  /** Atomically claims one Kandidat for the watchlist intake. Throws CandidateConflictError on a live claim. */
+  claimCandidate(key: string, claimId: string, now: string): Promise<CreatorCandidate | null>;
+  /** Ends the intake of the current claim; a stale claim gets null. */
+  settleCandidate(key: string, claimId: string, result: CandidateSettle): Promise<CreatorCandidate | null>;
 }
 
 /** Outcome handed to settleIdeaDevelop: a storyboard, or nothing when the run failed. */

@@ -1,6 +1,7 @@
 // Relative imports so both `node --test` and the Convex bundler can load this file without the "@/" alias.
 import type { Creator, RankedSignal, SignalRecord, SignalScorer } from "../../contracts";
 import { isOutlier } from "../../discover-filter.ts";
+import { describeYoutubeOutlier, youtubeBaseline, youtubeMetrics, type YoutubeBaseline } from "./youtube-outlier.ts";
 
 export { isOutlier };
 
@@ -34,21 +35,50 @@ export function describeOutlier(outlier: number, channelRelative: number) {
 }
 
 /**
- * Outlier scorer. outlier = plays / followers (5.0 means five times the audience).
- * channelRelative = plays / median plays of the same creator in the retained corpus.
+ * A YouTube video under ADR-0007: the factor is views over the channel median of
+ * the last long-form videos, a Short scores 0. The follower ratio is only shown.
+ */
+function rankYoutube(record: SignalRecord, creator: Creator, baseline: YoutubeBaseline, now: Date): RankedSignal {
+  const metrics = youtubeMetrics(record, baseline, creator.audience, now);
+  const velocity = record.views / Math.max(1, metrics.ageDays * 24);
+  return {
+    ...record,
+    score: round(Math.min(99, metrics.factor * 10 + Math.log10(velocity + 1) * 4)),
+    relativeReach: metrics.viewsPerSubscriber,
+    velocity: Math.round(velocity),
+    outlier: metrics.factor,
+    channelRelative: metrics.factor,
+    channelMedian: baseline.median,
+    baselineCount: baseline.count,
+    viewsPerSubscriber: metrics.viewsPerSubscriber,
+    viewsPerDay: metrics.viewsPerDay,
+    reason: describeYoutubeOutlier(metrics, baseline, record.format),
+  };
+}
+
+/**
+ * Outlier scorer. Instagram (ADR-0003): outlier = plays / followers (5.0 means
+ * five times the audience), channelRelative = plays / median plays of the same
+ * creator in the retained corpus. YouTube (ADR-0007): outlier = views / median
+ * views of the channel's last 30 long-form videos, Shorts score 0.
  */
 export const outlierScorer: SignalScorer = {
   rank(records, creators, now = new Date()) {
     const creatorsById = new Map(creators.map((creator) => [creator.id, creator]));
     const medians = new Map<string, number>();
+    const baselines = new Map<string, YoutubeBaseline>();
     for (const creator of creators) {
-      medians.set(creator.id, median(records.filter((r) => r.creatorId === creator.id).map(reach)));
+      const own = records.filter((r) => r.creatorId === creator.id);
+      if (creator.network === "youtube") baselines.set(creator.id, youtubeBaseline(own));
+      else medians.set(creator.id, median(own.map(reach)));
     }
 
     return records
       .map((record): RankedSignal | null => {
         const creator = creatorsById.get(record.creatorId);
         if (!creator) return null;
+        const youtube = baselines.get(creator.id);
+        if (youtube) return rankYoutube(record, creator, youtube, now);
         const value = reach(record);
         const outlier = outlierFactor(record, creator.audience);
         const baseline = medians.get(creator.id) ?? 0;

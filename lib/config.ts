@@ -103,3 +103,38 @@ export const HOOK_DIRECTION_MAX = 500;
 export const HOOK_SOURCE_EXCERPT = 240;
 /** A generated Draft sentence at or above this word count may not occur in supplied source text. */
 export const SCRIPT_COPY_SENTENCE_MIN_WORDS = 8;
+
+/**
+ * YouTube Outlier (ADR-0007): views divided by the median views of the channel's
+ * last YOUTUBE_BASELINE_VIDEOS long-form videos. Shorts never count.
+ */
+export const YOUTUBE_BASELINE_VIDEOS = 30;
+/** Below this many long-form videos a channel median is too thin; the factor stays 0. */
+export const YOUTUBE_MIN_BASELINE = 5;
+/** A video up to this length counts as a Short (YouTube allows Shorts up to three minutes since 2024). */
+export const YOUTUBE_SHORT_MAX_SECONDS = 180;
+/** Default Schwelle for YouTube in Discover and for Kandidaten from a Suchlauf. */
+export const YOUTUBE_DEFAULT_THRESHOLD = 3;
+/** Videos one search term asks for; one search.list page holds at most 50. */
+export const YOUTUBE_SEARCH_RESULTS_PER_TERM = Math.min(50, positiveEnv("YOUTUBE_SEARCH_RESULTS_PER_TERM", 50));
+/** A Suchlauf only looks at videos published in this many days. */
+export const YOUTUBE_SEARCH_WINDOW_DAYS = positiveEnv("YOUTUBE_SEARCH_WINDOW_DAYS", 90);
+/** Channels one Suchlauf measures a median for. Each costs about two quota units. */
+export const YOUTUBE_SEARCH_CHANNEL_LIMIT = positiveEnv("YOUTUBE_SEARCH_CHANNEL_LIMIT", 150);
+/** Search terms one Suchlauf accepts. search.list is the expensive call. */
+export const YOUTUBE_SEARCH_TERM_LIMIT = 20;
+/** YouTube watchlist channels one refresh may touch. The API costs quota, not money. */
+export const YOUTUBE_REFRESH_CHANNEL_LIMIT = positiveEnv("YOUTUBE_REFRESH_CHANNEL_LIMIT", 100);
+/**
+ * Quota units per API call as Google documents them. search.list is counted at
+ * the classic 100 units, so the ledger errs high if the project has the
+ * separate search pot. Daily budget: 10,000 units, reset at midnight Pacific.
+ */
+export const YOUTUBE_QUOTA_COST = { search: 100, videos: 1, channels: 1, playlistItems: 1 } as const;
+export const YOUTUBE_DAILY_QUOTA = 10_000;
+/** Outlier videos kept as evidence on one Kandidat. */
+export const CANDIDATE_EVIDENCE_LIMIT = 5;
+/** Sources kept on one Kandidat; the oldest fall off. */
+export const CANDIDATE_SOURCE_LIMIT = 20;
+/** An acceptance claim older than this may be taken over by a retry. */
+export const CANDIDATE_CLAIM_TIMEOUT_MS = 10 * 60_000;

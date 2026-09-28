@@ -1573,3 +1573,37 @@ main {
   /* Four numbers, so the shared three-column rule would strand the last one on its own row. */
   .creator-hero .stat-blocks { grid-template-columns: 1fr 1fr; }
 }
+
+/* ---------- YouTube Outlier-Radar ---------- */
+
+.yt-radar { display: grid; gap: 18px; }
+.yt-status { display: flex; align-items: flex-start; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+.yt-status svg { flex: none; margin-top: 2px; }
+.yt-result svg { color: var(--accent); }
+.yt-bad { color: var(--danger); display: inline-flex; align-items: flex-start; gap: 6px; margin: 6px 0 0; font-size: 11px; }
+.yt-terms { display: grid; gap: 10px; padding: 16px 22px 20px; border-top: 1px solid var(--line); }
+.yt-topic { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 12px; align-items: start; }
+.yt-topic-label { color: var(--muted); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; padding-top: 5px; }
+.yt-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.yt-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 6px 4px 10px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--surface-strong); font-size: 11.5px; overflow-wrap: anywhere; }
+.yt-chip small { color: var(--accent); font-family: var(--font-mono); font-size: 9.5px; }
+.yt-chip button { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); }
+.yt-chip button:hover { color: var(--danger); background: rgba(255,122,89,.12); }
+.yt-chip.empty { color: var(--danger); border-style: dashed; padding-right: 10px; }
+.yt-term-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.yt-term-form input, .yt-term-form select { min-width: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-soft); color: var(--ink); }
+.yt-term-form input { flex: 1 1 220px; }
+.yt-views { justify-self: start; flex-wrap: wrap; }
+.yt-candidates td { vertical-align: top; }
+.yt-candidates .muted { display: inline; line-height: 1.5; }
+.yt-evidence { display: flex; gap: 6px; }
+.yt-evidence a { position: relative; display: block; width: 72px; aspect-ratio: 16 / 9; border-radius: 4px; overflow: hidden; background: var(--surface-strong); }
+.yt-evidence img { width: 100%; height: 100%; object-fit: cover; }
+.yt-evidence b { position: absolute; right: 3px; bottom: 3px; padding: 1px 4px; border-radius: 3px; background: rgba(11,13,12,.85); color: var(--accent); font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; }
+.yt-candidates .controls .primary-button { padding: 7px 12px; font-size: 12px; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .yt-topic { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .yt-status, .yt-terms { padding-left: 16px; padding-right: 16px; }
+  .yt-candidates .controls { flex-wrap: wrap; justify-content: flex-start; }
+}

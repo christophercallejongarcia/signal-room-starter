@@ -168,3 +168,31 @@ test("creator limit above the list size leaves the run ok and skips nobody", asy
   assert.equal(result.creatorsSkipped, 0);
   assert.equal(storage.runs[0].status, "ok");
 });
+
+test("runRefresh routes YouTube channels to their connector and logs the quota; without a key they are left out", async () => {
+  const yt = { id: "youtube-UCabcdefghijklmnopqrstuv", name: "Y", handle: "@y", network: "youtube", audience: 1, accent: "#fff" };
+  const quota = { units: 3, calls: { search: 0, videos: 1, channels: 1, playlistItems: 1 } };
+  const youtubeRecord = { ...record, id: "yt-v1", externalId: "v1", creatorId: yt.id, format: "long" };
+  const saved = [];
+  const collect = async (c) => c.network === "youtube"
+    ? { records: [youtubeRecord], usage: { unreported: 0, computeUnits: 0, costUsd: 0 }, creatorPatch: { audience: 7_000 }, youtubeVideos: [{ id: "yt-v1" }], youtubeQuota: quota }
+    : { records: [record], usage };
+
+  const storage = fakeStorage();
+  storage.creators.push(yt);
+  storage.saveYoutubeVideos = async (videos) => { saved.push(...videos); return { inserted: videos.length, updated: 0 }; };
+  await runRefresh({ storage, collect, cacheCovers: noCovers, now: () => NOW, youtubeEnabled: true, transcriptLimit: 0 });
+  const run = storage.runs[0];
+  assert.equal(run.creatorsChecked, 2);
+  assert.deepEqual(run.youtubeQuota, quota);
+  assert.equal(run.usage.costUsd, 0.08, "YouTube adds no dollars to the Apify figure");
+  assert.equal(storage.creators.find((c) => c.id === yt.id).audience, 7_000, "fresh subscriber count lands on the creator");
+  assert.deepEqual(saved, [{ id: "yt-v1" }]);
+
+  const keyless = fakeStorage();
+  keyless.creators.push(yt);
+  const seen = [];
+  await runRefresh({ storage: keyless, collect: async (c) => { seen.push(c.network); return { records: [], usage }; }, cacheCovers: noCovers, now: () => NOW, youtubeEnabled: false, transcriptLimit: 0 });
+  assert.deepEqual(seen, ["instagram"]);
+  assert.equal(keyless.runs[0].status, "ok", "a missing key is no creator failure");
+});
