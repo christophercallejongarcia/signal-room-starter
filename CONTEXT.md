@@ -128,6 +128,18 @@ Nicht: "Keyword", "Hashtag" (Hashtag gehört zum Instagram-Hashtag-Sweep).
 Ein Creator, den Signal Room für die Watchlist vorschlägt, Tabelle `creatorCandidates` (P4-05). Schlüssel `<network>:<id>`, bei YouTube die Kanal-ID. Trägt Begründung, Quellen, Belege (bis zu 5 Outlier-Videos), Datenstand und die Entscheidung `proposed`, `selected`, `accepted`, `rejected` oder `deferred`. Ein neuer Fund führt Quellen und neuere Zahlen zusammen, ändert aber nie die Entscheidung. Aufnehmen (P4-09, `POST /api/candidates/accept`) beansprucht den Kandidaten atomar, löst den Kanal auf, fährt den Backfill und setzt `accepted` mit `creatorId`; ein Fehler lässt ihn `selected` mit `acceptError`, der nächste Klick setzt dort fort. Ein bereits getrackter Creator wird ohne Backfill verbunden.
 Nicht: "Lead", "Vorschlag", "Empfehlung".
 
+**Titel-Builder**
+Der Tab "Titel" (`components/title-builder.tsx`), der für ein YouTube-Video Titel-Varianten für YouTubes A/B-Test schreibt: Eingabe Arbeitstitel, Skript, von Hand eingespielte vidIQ-Ideen und die Anzahl aus `TITLE_COUNTS` (3, 5, 10). Englische Outlier sind die Musterquelle, deutsche zeigen die Konkurrenz. Der Lauf geht über `POST /api/youtube/titles` an den Bridge-Endpunkt `/v1/titles`; jeder Lauf liegt als eigene Datei unter `data/title-runs/` und lässt sich als Markdown abrufen.
+Nicht: "Headline-Generator", "Titles" (das war der alte Instagram-Tab, heute Hooks-Board).
+
+**Titel-Muster**
+Ein wiederkehrendes Muster in YouTube-Titeln, regelbasiert erkannt aus `TITLE_PATTERNS` in `lib/title-builder.ts` (Stufen, Zahl und Liste, Zeitangabe, Einsteiger und Kurs, Kontrast, Ich-Erfahrung, Warnung, Insider, Neuheit, Frage, Warum), Englisch und Deutsch in einer Regel. Ein Titel kann mehrere tragen. Das YouTube-Gegenstück zum Format Signal, getrennt gehalten, weil Titel anders gebaut sind als Hooks.
+Nicht: "Format Signal" (das meint Instagram-Hooks), "Template".
+
+**Titel-Prüfung**
+Was `checkTitle` zu einer Titel-Variante sagt: welche Titel-Muster sie trägt und wie viele Outlier der letzten `TITLE_CHECK_WINDOW_DAYS` (42 Tage) dieselben tragen, dazu der wortnächste deutsche Outlier und Hinweise (Länge über 70 oder 100 Zeichen, Gedankenstrich, fast wörtliche Kopie). "belegt" heißt, mindestens ein Muster steckt in mindestens `TITLE_CHECK_MIN_SUPPORT` (2) aktuellen Outliern; sonst "offen", also ein Test ohne Beleg. Die Outlier, die eine Variante angeregt haben, nennt der Bridge als Position im Paket, nie als Titel.
+Nicht: "Score", "Bewertung", "Ranking".
+
 **Quota**
 Das Tagesbudget der YouTube Data API, Reset um Mitternacht Pacific, in zwei Töpfen: 10.000 Einheiten für alles außer der Suche (jeder Aufruf 1) und 100 Suchaufrufe (`search.list`). Im klassischen Modell kostet eine Suche 100 Einheiten, dann `YOUTUBE_SEARCH_UNIT_COST=100`. Jeder YouTube-Run speichert `youtubeQuota` (Einheiten und Aufrufe je Methode); der Profile-Tab zeigt sie unter den Kosten.
 Nicht: "Kosten" (die meinen Apify-Dollar), "Rate-Limit".
