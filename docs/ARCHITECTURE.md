@@ -193,3 +193,7 @@ The stable read seam is the `youtubeVideos` table (`YoutubeVideo` in `lib/contra
 
 Every row carries `title`, `thumbnailUrl` (`i.ytimg.com`, largest available, does not expire), `url`, `channelTitle`, `channelHandle`, `channelId`, `subscribers`, `views`, `factor`, `channelMedian`, `baselineCount`, `viewsPerSubscriber`, `viewsPerDay`, `publishedAt`, `durationSeconds`, `market`, `topics`, `queries`, `source` (`search` or `watchlist`) and `measuredAt`. The numbers are a snapshot at `measuredAt`; titles and descriptions are untrusted creator text.
 
+### Network toggle
+
+The desk-wide YouTube/Instagram toggle sits in a bar at the top of `<main>` in `SignalRoom`. `lib/network-view.ts` owns the rules: `resolveNetwork` reads `?network=` first, then localStorage, then Instagram; `deskSearch` writes `tab` and `network` back with `history.replaceState` once the mount has read them, so a reload or a shared link opens the same view. Per-network thresholds stay in React state (`defaultThreshold`: 2x Instagram, 3x YouTube); links into `/creator/<id>` carry the desk threshold, and without one the page falls back to the creator's own network. `tabPath(tab, network)` builds the back link. `ideasForNetwork` assigns an Idea to a network through its source Signal's creator, else its source link host; Ideas without a source show in both views. Tabs without a YouTube view (Briefing, Trend Radar, Format Signals, Scripts, Hooks) keep showing Instagram data and say so.
+

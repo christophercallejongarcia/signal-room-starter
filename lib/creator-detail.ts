@@ -71,9 +71,11 @@ export const FROM_PARAM = "from";
 /** Outlier threshold carried along, so the detail page limes at what the desk limed at. */
 export const THRESHOLD_PARAM = "threshold";
 
-/** The desk, on one tab. */
-export function tabPath(tab: string) {
-  return `/?${TAB_PARAM}=${encodeURIComponent(tab)}`;
+/** The desk, on one tab, optionally on one network (see lib/network-view.ts). */
+export function tabPath(tab: string, network?: string) {
+  const query = new URLSearchParams({ [TAB_PARAM]: tab });
+  if (network) query.set("network", network);
+  return `/?${query}`;
 }
 
 /**
@@ -91,8 +93,8 @@ export function creatorPath(id: string, origin?: { from: string; threshold?: num
   return `/creator/${encodeURIComponent(id)}${search ? `?${search}` : ""}`;
 }
 
-/** Reads the threshold off a query string, falling back to the default for anything unselectable. */
-export function parseThreshold(search: string, fallback: OutlierThreshold): OutlierThreshold {
+/** Reads the threshold off a query string, falling back for anything unselectable (null: "the link carried none"). */
+export function parseThreshold<F extends OutlierThreshold | null>(search: string, fallback: F): OutlierThreshold | F {
   const raw = Number(new URLSearchParams(search).get(THRESHOLD_PARAM));
   return OUTLIER_THRESHOLDS.find((value) => value === raw) ?? fallback;
 }

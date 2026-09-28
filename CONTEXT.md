@@ -20,6 +20,10 @@ Nicht: "Clip", "Short" (Short ist reserviert für YouTube).
 Die Menge aller Creators, die der tägliche Refresh abfragt; "Add to daily watch" nimmt einen Creator auf, die UI zeigt sie im Tab "Tracked Channels".
 Nicht: "Tracked Channels" (nur als UI-Label), "Abo", "Feed".
 
+**Netzwerk-Regler**
+Der Schalter YouTube/Instagram oben in jedem Reiter (`NetworkToggle` in `components/signal-room.tsx`). Der Zustand steht in der URL als `?network=youtube` neben `?tab=` und wird in localStorage (`signal-room.network`) gemerkt; ein Link ohne Netzwerk öffnet die zuletzt gewählte Ansicht, sonst Instagram (`resolveNetwork` in `lib/network-view.ts`). Discover, Tracked Channels, Ideas, Cover Lab und Profile folgen ihm; Briefing, Trend Radar, Format Signals, Scripts und Hooks zeigen bei YouTube einen Hinweis und weiter Instagram-Daten. Jedes Netzwerk hat seine eigene Schwelle (Instagram 2x, YouTube 3x, `defaultThreshold`). Die Creator-Detailseite liest das Netzwerk vom Creator selbst und trägt es in den Zurück-Link. Ideas zeigen die Ideas des gewählten Netzwerks (über das Quell-Signal, sonst den Quell-Link) und alle ohne Quelle.
+Nicht: "Plattform-Filter", "Channel-Umschalter".
+
 **Creator-Detailseite**
 Die eigene Route `/creator/<creator.id>` (`app/creator/[id]/page.tsx`, gerendert von `components/creator-detail.tsx`), erreichbar über den Creator-Namen in Tracked Channels und den Handle auf einer Discover-Karte; den Link baut `creatorPath` in `lib/creator-detail.ts`. Zeigt die Stat-Leiste (Views im Korpus, Durchschnitts-Outlier, stärkster Outlier, behaltene Reels aus `creatorStats`) und die nach Datum, Plays oder Outlier sortierbare Tabelle aller behaltenen Reels (`sortCreatorReels`). Der Zurück-Link führt auf `/?tab=channels`; die Shell liest den `tab`-Parameter beim Mount.
 Nicht: "Creator-Profil" (Profil meint den Profile-Tab), "Channel-Seite".
