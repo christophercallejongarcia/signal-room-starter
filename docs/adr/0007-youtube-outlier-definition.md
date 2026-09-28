@@ -6,7 +6,7 @@ Status: akzeptiert, 2026-09-28
 
 ADR-0003 misst Instagram-Reels an der Follower-Zahl (`plays / audience`). Für YouTube taugt das nicht. Longform-Videos werden überwiegend über Suche und Empfehlungen gesehen, nicht von Abonnenten, und die Abonnentenzahl liefert die API nur auf drei signifikante Stellen gerundet. Ein Kanal mit 800.000 Abos und 20.000 Aufrufen pro Video hätte nach ADR-0003 nie einen Outlier, obwohl ein Video mit 200.000 Aufrufen für diesen Kanal zehnmal so gut läuft wie üblich. vidIQ und 1of10 lesen YouTube deshalb gegen den eigenen Normalwert des Kanals. Chris hat das am 2026-09-28 so entschieden (YT-OS Ticket 11).
 
-Die Datenquelle ist die YouTube Data API v3 (YT-OS Ticket 04, Recherche in `YT-OS/.scratch/yt-os/assets/youtube-datenquelle.md`). Sie ist kostenlos, begrenzt aber auf 10.000 Quota-Einheiten am Tag, und `search.list` zählt 100 Einheiten.
+Die Datenquelle ist die YouTube Data API v3 (YT-OS Ticket 04, Recherche in `YT-OS/.scratch/yt-os/assets/youtube-datenquelle.md`). Sie ist kostenlos, begrenzt aber auf 10.000 Quota-Einheiten am Tag. `search.list` hat laut aktueller Google-Doku einen eigenen Topf von 100 Aufrufen am Tag.
 
 ## Entscheidung
 
@@ -28,4 +28,6 @@ Die Zahlen werden aufgefrischt, weil Longform wochenlang wächst: Jeder Refresh 
 - Der Median braucht frische Zahlen des ganzen Fensters. Das kostet bei YouTube nur Quota, deshalb misst jeder Refresh die ganze letzte Seite neu statt nur neue Videos.
 - Seit dem 27.08.2026 zählt YouTube Aufrufe ab dem ersten Frame. Videos davor und danach sind im Median nur eingeschränkt vergleichbar, bis das Fenster aus dem Übergang herausgewachsen ist.
 - Die YouTube API Developer Policies verbieten abgeleitete Kennzahlen aus API-Daten. Für ein privates Ein-Personen-Werkzeug ist das Risiko ein gesperrter Schlüssel; Rückfall ist `streamers/youtube-channel-scraper` über Apify, weil nur `mapVideo` die Quellfelder kennt.
-- Der Quota-Zähler rechnet `search.list` mit 100 Einheiten. Ein Suchlauf mit den zehn Start-Begriffen kostete am 2026-09-28 1.274 Einheiten (13 % des Tagesbudgets).
+- Der Quota-Zähler führt zwei Töpfe: Einheiten für alles außer der Suche (10.000 am Tag) und Suchaufrufe (100 am Tag). `YOUTUBE_SEARCH_UNIT_COST` ist standardmäßig 0; ein Projekt im klassischen Modell setzt 100. Welches Modell für Chris' Cloud-Projekt gilt, ist nicht geprüft. Ein Suchlauf mit den zehn Start-Begriffen kostete am 2026-09-28 rund 274 Einheiten und 10 Suchaufrufe; der damals gespeicherte Run zeigt noch 1.274, weil er die Suche mit 100 Einheiten zählte.
+- Das Ledger gehört zum Lauf, nicht zum Kanal: Refresh, Backfill und Aufnahme loggen jeden gestarteten Aufruf, auch fehlgeschlagene und das vorgelagerte Auflösen. Nach `quotaExceeded` startet der Refresh keinen weiteren YouTube-Kanal.
+- Fehlt einem Video die Aufrufzahl, zählt es nicht als 0: Es geht in keinen Median ein und überschreibt keine gespeicherte Messung. Scheitert beim Suchlauf das Nachladen der Baseline, bekommt der betroffene Kanal keinen neuen Faktor.

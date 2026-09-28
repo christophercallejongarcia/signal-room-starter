@@ -13,6 +13,8 @@ type SearchMeta = {
   terms: YoutubeSearchTerm[];
   topics: { id: YoutubeTopic; label: string }[];
   dailyQuota: number;
+  dailySearchCalls: number;
+  running: boolean;
   lastRun: Run | null;
 };
 
@@ -43,11 +45,12 @@ const PAGE = 12;
 /** P4-09: the watchlist aims for 20 to 30 YouTube channels; a bigger list is never trimmed. */
 const WATCHLIST_TARGET = "20 bis 30";
 
-function quotaLine(run: Pick<Run, "youtubeQuota"> | null | undefined, daily: number) {
+/** Two separate pots: units for everything but search, and the daily search calls. */
+function quotaLine(run: Pick<Run, "youtubeQuota"> | null | undefined, daily: number, dailySearch: number) {
   const quota = run?.youtubeQuota;
   if (!quota) return "Quota: noch kein Lauf";
   const share = ((quota.units / daily) * 100).toFixed(1).replace(".", ",");
-  return `Quota: ${quota.units.toLocaleString("de-DE")} Einheiten (${share} % des Tagesbudgets), davon ${quota.calls.search} Suchaufrufe`;
+  return `Quota: ${quota.units.toLocaleString("de-DE")} Einheiten (${share} % von ${daily.toLocaleString("de-DE")}), ${quota.calls.search} von ${dailySearch} Suchaufrufen am Tag`;
 }
 
 async function readJson<T>(response: Response): Promise<T & { error?: string }> {
@@ -232,17 +235,17 @@ export function YoutubeRadar({
           {meta && !meta.configured && <span className="yt-bad"><WarningCircle size={14} /> YOUTUBE_API_KEY fehlt in .env.local. Ohne Schlüssel kein Suchlauf.</span>}
           {meta && lastRun && (
             <span>
-              Letzter Suchlauf {timeAgo(lastRun.startedAt, nowMs)} · {lastRun.status} · {lastRun.creatorsChecked} Kanäle gemessen · {quotaLine(lastRun, meta.dailyQuota)}
+              Letzter Suchlauf {timeAgo(lastRun.startedAt, nowMs)} · {lastRun.status} · {lastRun.creatorsChecked} Kanäle gemessen · {quotaLine(lastRun, meta.dailyQuota, meta.dailySearchCalls)}
             </span>
           )}
-          {meta && !lastRun && meta.configured && <span>Noch kein Suchlauf. Mit den zehn Start-Begriffen kostet er rund 1.300 von {formatNumber(meta.dailyQuota)} Quota-Einheiten am Tag.</span>}
+          {meta && !lastRun && meta.configured && <span>Noch kein Suchlauf. Mit den zehn Start-Begriffen kostet er rund 300 von {formatNumber(meta.dailyQuota)} Einheiten und 10 von {meta.dailySearchCalls} Suchaufrufen am Tag.</span>}
         </div>
 
         {search.answer && (
           <div className="yt-status yt-result" role="status">
             <CheckCircle size={14} weight="fill" />
             <span>
-              {search.answer.videosFound} Longform-Videos, {search.answer.channelsMeasured} Kanäle gemessen, {search.answer.outliers} Outlier ab 3x, {search.answer.candidates} Kanäle als Kandidaten. {quotaLine({ youtubeQuota: search.answer.quota }, meta?.dailyQuota ?? 10_000)}.
+              {search.answer.videosFound} Longform-Videos, {search.answer.channelsMeasured} Kanäle gemessen, {search.answer.outliers} Outlier ab 3x, {search.answer.candidates} Kanäle als Kandidaten. {quotaLine({ youtubeQuota: search.answer.quota }, meta?.dailyQuota ?? 10_000, meta?.dailySearchCalls ?? 100)}.
               {search.answer.missingTopics.length > 0 && ` Ohne Begriff: ${search.answer.missingTopics.map((id) => topics.find((t) => t.id === id)?.label ?? id).join(", ")}.`}
             </span>
           </div>

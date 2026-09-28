@@ -125,7 +125,7 @@ Ein Creator, den Signal Room für die Watchlist vorschlägt, Tabelle `creatorCan
 Nicht: "Lead", "Vorschlag", "Empfehlung".
 
 **Quota**
-Das Tagesbudget der YouTube Data API: 10.000 Einheiten, Reset um Mitternacht Pacific. `search.list` zählt 100, jeder andere Aufruf 1. Jeder YouTube-Run speichert `youtubeQuota` (Einheiten und Aufrufe je Methode); der Profile-Tab zeigt sie unter den Kosten.
+Das Tagesbudget der YouTube Data API, Reset um Mitternacht Pacific, in zwei Töpfen: 10.000 Einheiten für alles außer der Suche (jeder Aufruf 1) und 100 Suchaufrufe (`search.list`). Im klassischen Modell kostet eine Suche 100 Einheiten, dann `YOUTUBE_SEARCH_UNIT_COST=100`. Jeder YouTube-Run speichert `youtubeQuota` (Einheiten und Aufrufe je Methode); der Profile-Tab zeigt sie unter den Kosten.
 Nicht: "Kosten" (die meinen Apify-Dollar), "Rate-Limit".
 Nicht: "Cutoff", "Limit", "Grenzwert".
 

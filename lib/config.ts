@@ -126,12 +126,21 @@ export const YOUTUBE_SEARCH_TERM_LIMIT = 20;
 /** YouTube watchlist channels one refresh may touch. The API costs quota, not money. */
 export const YOUTUBE_REFRESH_CHANNEL_LIMIT = positiveEnv("YOUTUBE_REFRESH_CHANNEL_LIMIT", 100);
 /**
- * Quota units per API call as Google documents them. search.list is counted at
- * the classic 100 units, so the ledger errs high if the project has the
- * separate search pot. Daily budget: 10,000 units, reset at midnight Pacific.
+ * Units one search.list call takes from the 10,000-unit pot. Google's current
+ * quota docs give search its own pot of YOUTUBE_DAILY_SEARCH_CALLS calls a day,
+ * so by default a search costs no units and is counted as a call. A project still
+ * on the classic model sets YOUTUBE_SEARCH_UNIT_COST=100.
  */
-export const YOUTUBE_QUOTA_COST = { search: 100, videos: 1, channels: 1, playlistItems: 1 } as const;
+export const YOUTUBE_SEARCH_UNIT_COST = (() => {
+  const value = Number(process.env.YOUTUBE_SEARCH_UNIT_COST);
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+})();
+/** Quota units per API call. Every call is also counted by method on the Run. */
+export const YOUTUBE_QUOTA_COST = { search: YOUTUBE_SEARCH_UNIT_COST, videos: 1, channels: 1, playlistItems: 1 } as const;
+/** Daily unit budget for everything but search, reset at midnight Pacific. */
 export const YOUTUBE_DAILY_QUOTA = 10_000;
+/** Daily search.list calls in the separate search pot. */
+export const YOUTUBE_DAILY_SEARCH_CALLS = 100;
 /**
  * A find makes its channel a Kandidat only with at least this many views: a tiny
  * channel with a median of 40 views turns 1,500 views into a meaningless 38x.
