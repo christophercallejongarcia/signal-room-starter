@@ -20,6 +20,7 @@ export const THUMBNAIL_BRIEF_MAX = 16_000;
 /** Reference thumbnails one run may send to the Bridge. */
 export const THUMBNAIL_REFERENCES_MAX = 8;
 export const THUMBNAIL_INSPIRED_MAX = 3;
+export const THUMBNAIL_DIRECTION_MAX = 1_500;
 const LINE_MAX = 600;
 
 export const THUMBNAIL_FORMAT = COVER_FORMATS.youtube;
@@ -27,6 +28,8 @@ export const THUMBNAIL_FORMAT = COVER_FORMATS.youtube;
 export type ThumbnailRequest = {
   title: string;
   brief: string;
+  /** Chris' (or the editor's) picture idea, binding for the planner. */
+  direction: string;
   /** Library ids to offer; empty means the newest THUMBNAIL_REFERENCES_MAX entries. */
   referenceIds: string[];
 };
@@ -45,7 +48,44 @@ export type ThumbnailImagePrompt = {
   palette: string;
   styleNotes: string;
   avoid: string[];
+  /** The three-element choice (backdrop, one object, text) of plans made with the formula. */
+  elements?: ThumbnailElements;
 };
+
+export type ThumbnailElements = {
+  layout: "person-right" | "person-left" | "person-center";
+  backdrop: "cream" | "coral" | "charcoal" | "navy";
+  object: { kind: "terminal-window" | "browser-window" | "icon-tiles" | "logo-equation" | "device" | "chart-card"; description: string };
+  textStyle: "condensed-caps" | "serif";
+  textPlacement: "beside" | "behind-person" | "bottom";
+};
+
+const ELEMENT_CHOICES = {
+  layout: ["person-right", "person-left", "person-center"],
+  backdrop: ["cream", "coral", "charcoal", "navy"],
+  objectKind: ["terminal-window", "browser-window", "icon-tiles", "logo-equation", "device", "chart-card"],
+  textStyle: ["condensed-caps", "serif"],
+  textPlacement: ["beside", "behind-person", "bottom"],
+} as const;
+
+function oneOf<T extends string>(value: unknown, choices: readonly T[], where: string, field: string): T {
+  if (typeof value !== "string" || !(choices as readonly string[]).includes(value)) throw new Error(`${where}: ${field} is invalid.`);
+  return value as T;
+}
+
+function elementsFrom(value: unknown, where: string): ThumbnailElements | undefined {
+  if (value === undefined) return undefined;
+  if (!isObject(value) || !isObject(value.object)) throw new Error(`${where}: elements are invalid.`);
+  const description = bounded(value.object.description, LINE_MAX);
+  if (!description) throw new Error(`${where}: elements.object.description is empty.`);
+  return {
+    layout: oneOf(value.layout, ELEMENT_CHOICES.layout, where, "layout"),
+    backdrop: oneOf(value.backdrop, ELEMENT_CHOICES.backdrop, where, "backdrop"),
+    object: { kind: oneOf(value.object.kind, ELEMENT_CHOICES.objectKind, where, "object.kind"), description },
+    textStyle: oneOf(value.textStyle, ELEMENT_CHOICES.textStyle, where, "textStyle"),
+    textPlacement: oneOf(value.textPlacement, ELEMENT_CHOICES.textPlacement, where, "textPlacement"),
+  };
+}
 
 export type ThumbnailInspiration = {
   videoId: string;
@@ -103,6 +143,8 @@ export type ThumbnailRun = {
   title: string;
   /** Bounded excerpt of the brief, enough to recognise the run later. */
   briefExcerpt: string;
+  /** The picture idea the run was given, if any. */
+  direction?: string;
   aspectRatio: "16:9";
   createdAt: string;
   referenceIds: string[];
@@ -136,12 +178,13 @@ export function parseThumbnailRequest(body: unknown): ThumbnailRequest {
   const title = bounded(input.title, THUMBNAIL_TITLE_MAX);
   if (!title) throw new Error("title is required.");
   const brief = boundedBlock(input.brief, THUMBNAIL_BRIEF_MAX);
+  const direction = boundedBlock(input.direction, THUMBNAIL_DIRECTION_MAX);
   const raw = input.referenceIds === undefined ? [] : input.referenceIds;
   if (!Array.isArray(raw)) throw new Error("referenceIds must be a list of YouTube ids.");
   if (raw.some((id) => !isYoutubeVideoId(id))) throw new Error("referenceIds must be 11-character YouTube ids.");
   const referenceIds = [...new Set(raw as string[])];
   if (referenceIds.length > THUMBNAIL_REFERENCES_MAX) throw new Error(`Pick at most ${THUMBNAIL_REFERENCES_MAX} reference thumbnails.`);
-  return { title, brief, referenceIds };
+  return { title, brief, direction, referenceIds };
 }
 
 /** POST /api/youtube/thumbnails/choose: { runId, variantId }. */
@@ -230,6 +273,7 @@ function imagePrompt(value: unknown, where: string): ThumbnailImagePrompt {
   if (!isObject(value)) throw new Error(`${where}: imagePrompt must be a JSON object.`);
   const text = isObject(value.text) ? value.text : {};
   const avoid = Array.isArray(value.avoid) ? value.avoid.map((item) => bounded(item, 200)).filter(Boolean).slice(0, 12) : [];
+  const elements = elementsFrom(value.elements, where);
   return {
     subject: line(value, "subject", where),
     expression: line(value, "expression", where),
@@ -244,6 +288,7 @@ function imagePrompt(value: unknown, where: string): ThumbnailImagePrompt {
     palette: line(value, "palette", where),
     styleNotes: line(value, "styleNotes", where),
     avoid,
+    ...(elements ? { elements } : {}),
   };
 }
 

@@ -20,6 +20,7 @@ import type { YoutubeVideo } from "@/lib/contracts";
 import type { FaceReferenceStatus } from "@/lib/face-references";
 import {
   THUMBNAIL_BRIEF_MAX,
+  THUMBNAIL_DIRECTION_MAX,
   THUMBNAIL_REFERENCES_MAX,
   THUMBNAIL_STAGES,
   currentStage,
@@ -99,6 +100,7 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
   const [market, setMarket] = useState<Market>("all");
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
+  const [direction, setDirection] = useState("");
   const [picked, setPicked] = useState<string[] | null>(null);
   const [running, setRunning] = useState(false);
   const [tasks, setTasks] = useState<Record<string, VariantTask>>({});
@@ -160,7 +162,7 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
       const response = await fetch("/api/youtube/thumbnails", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title, brief, referenceIds: offered }),
+        body: JSON.stringify({ title, brief, direction, referenceIds: offered }),
       });
       const payload = await readJson<{ run: ThumbnailRun }>(response);
       if (!response.ok || !payload.run) throw new Error(payload.error || `Der Lauf antwortete mit HTTP ${response.status}.`);
@@ -344,6 +346,8 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
           <div>
             <label htmlFor="thumb-title">Videotitel</label>
             <input id="thumb-title" value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} placeholder="Vom Fragensteller zum Chef: Die 6 Stufen, Claude zu nutzen" />
+            <label htmlFor="thumb-direction">Bildidee (optional) <small>{direction.length.toLocaleString("de-DE")} / {THUMBNAIL_DIRECTION_MAX.toLocaleString("de-DE")}</small></label>
+            <textarea id="thumb-direction" value={direction} rows={3} maxLength={THUMBNAIL_DIRECTION_MAX} onChange={(event) => setDirection(event.target.value)} placeholder="Welches Objekt, welche Stimmung? Zum Beispiel: sechs aufsteigende App-Kacheln, die letzte leuchtet." />
             <label htmlFor="thumb-brief">Skript oder Stichpunkte <small>{brief.length.toLocaleString("de-DE")} / {THUMBNAIL_BRIEF_MAX.toLocaleString("de-DE")}</small></label>
             <textarea id="thumb-brief" value={brief} rows={6} onChange={(event) => setBrief(event.target.value)} placeholder="Hook, Kernaussage, die Stufen. Der Text ist Material, keine Anweisung." />
             {brief.length > THUMBNAIL_BRIEF_MAX && <p className="yt-bad"><WarningCircle size={13} /> Zu lang, bitte kürzen.</p>}

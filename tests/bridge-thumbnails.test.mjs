@@ -105,6 +105,47 @@ test("Chris' picks carry his note and the rules reach the planner as binding", (
   assert.match(text.text, /"chrisSays": "Helles Licht, echtes Lachen"/);
   assert.match(text.text, /<rules>\n1\. Mobil lesbar\.\n<\/rules>/);
   assert.doesNotMatch(buildThumbnailPlanInput(request())[0].text, /<rules>/);
+  const directed = validateThumbnailRequest({ video: { title: "T" }, references, faces, direction: "Sechs Kacheln" });
+  assert.match(buildThumbnailPlanInput(directed)[0].text, /<direction>\nSechs Kacheln\n<\/direction>/);
+});
+
+function formulaVariant(extra = {}) {
+  const base = variant();
+  const { keyVisual, background, composition, palette, ...prompt } = base.imagePrompt;
+  return {
+    ...base,
+    imagePrompt: {
+      ...prompt,
+      layout: "person-right",
+      backdrop: "cream",
+      object: { kind: "terminal-window", description: "Terminal mit dem Befehl /stufe 6" },
+      textStyle: "condensed-caps",
+      textPlacement: "beside",
+    },
+    ...extra,
+  };
+}
+
+test("the formula plan picks backdrop, one object and text from enums, and the stages render only those", () => {
+  const schema = thumbnailPlanOutputSchema(request()).properties.variants.items.properties.imagePrompt;
+  assert.deepEqual(schema.properties.backdrop.enum, ["cream", "coral", "charcoal", "navy"]);
+  assert.ok(schema.required.includes("object") && !schema.required.includes("keyVisual"));
+  assert.match(buildThumbnailPlanInput(request())[0].text, /Exactly three visible elements/);
+
+  const [planned] = normalizeThumbnailPlan({ variants: [formulaVariant(), formulaVariant(), formulaVariant()] }, request());
+  assert.equal(planned.imagePrompt.elements.backdrop, "cream");
+  assert.equal(planned.imagePrompt.keyVisual, "Terminal mit dem Befehl /stufe 6", "legacy fields are derived from the enums");
+  assert.match(planned.imagePrompt.composition, /Chris on the right third/);
+
+  const background = buildThumbnailImageInput(request(), planned, "background").prompt;
+  assert.match(background.backdrop, /#F4EFE6/);
+  assert.equal(background.object.shows, "Terminal mit dem Befehl /stufe 6");
+  assert.ok(background.avoid.includes("more than one object"));
+  assert.equal(background.keyVisual, undefined, "no free-text scene reaches the image model");
+
+  const text = buildThumbnailImageInput({ ...request(), base: "/runs/person.png" }, planned, "text").prompt;
+  assert.match(text.text.typeface, /condensed sans serif/);
+  assert.throws(() => normalizeThumbnailPlan({ variants: [formulaVariant({ imagePrompt: { ...formulaVariant().imagePrompt, backdrop: "forest" } }), formulaVariant(), formulaVariant()] }, request()), /backdrop is invalid/);
 });
 
 test("the plan is normalized: overlay wins over the prompt text, unknown ids fail", () => {

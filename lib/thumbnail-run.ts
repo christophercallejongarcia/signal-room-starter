@@ -52,7 +52,7 @@ export class ThumbnailRunError extends Error {
 }
 
 type BridgeReference = { id: string; title: string; channelTitle: string; factor: number; views: number; source?: "manual"; note?: string; path: string };
-type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[]; rules?: string };
+type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[]; rules?: string; direction?: string };
 
 /** Chris' thumbnail playbook, short form, sent to the planner as binding rules. */
 export const THUMBNAIL_RULES_MAX = 8_000;
@@ -224,6 +224,7 @@ export async function runThumbnailBuilder(body: unknown, deps: ThumbnailRunDeps 
     references: ready,
     faces,
     ...(rules ? { rules: rules.text } : {}),
+    ...(request.direction ? { direction: request.direction } : {}),
   };
 
   let plan: ThumbnailPlanVariant[];
@@ -260,6 +261,7 @@ export async function runThumbnailBuilder(body: unknown, deps: ThumbnailRunDeps 
     id: runId,
     title: request.title,
     briefExcerpt: request.brief.slice(0, 280),
+    ...(request.direction ? { direction: request.direction } : {}),
     aspectRatio: "16:9",
     createdAt: started.toISOString(),
     referenceIds: ready.map((reference) => reference.id),

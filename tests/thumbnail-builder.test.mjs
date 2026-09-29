@@ -127,8 +127,10 @@ test("the request needs a title, bounds the brief and accepts at most eight YouT
   assert.deepEqual(parseThumbnailRequest({ title: "  Die 6 Stufen  ", brief: "Hook\r\n\r\n\r\nStufe 1" }), {
     title: "Die 6 Stufen",
     brief: "Hook\n\nStufe 1",
+    direction: "",
     referenceIds: [],
   });
+  assert.equal(parseThumbnailRequest({ title: "T", direction: "  Sechs Kacheln  " }).direction, "Sechs Kacheln");
   assert.throws(() => parseThumbnailRequest({ title: " " }), /title is required/);
   assert.throws(() => parseThumbnailRequest({ title: "T", referenceIds: ["../etc/passwd"] }), /11-character/);
   const many = Array.from({ length: THUMBNAIL_REFERENCES_MAX + 1 }, (_, index) => `AAAAAAAAA${String(index).padStart(2, "0")}`);
