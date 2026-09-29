@@ -17,6 +17,7 @@ import {
   thumbnailPlanOutputSchema,
   validateFaces,
   validateThumbnailRequest,
+  validateThumbnailStage,
 } from "./thumbnails.mjs";
 import { buildPatternDiscoveryPrompt, patternEvaluationOutputSchema, patternHypothesisOutputSchema, validatePatternDiscoveryRequest } from "./pattern-discovery.mjs";
 import {
@@ -289,9 +290,10 @@ const routes = new Map([
       label: "Thumbnail render",
       failure: "The local Codex thumbnail render failed.",
       run: async (input) => {
-        const request = validateThumbnailRequest(input);
+        const { stage, base } = validateThumbnailStage(input);
+        const request = { ...validateThumbnailRequest(input), ...(base ? { base } : {}) };
         const variant = normalizeThumbnailVariant(input.variant, request, 0);
-        const render = buildThumbnailImageInput(request, variant);
+        const render = buildThumbnailImageInput(request, variant, stage);
         await assertImageFiles(render.images);
         return { image: await renderCoverWithCodex(render.text, render.images) };
       },

@@ -1,11 +1,38 @@
 "use client";
 
-import { ArrowCounterClockwise, ArrowSquareOut, BookmarkSimple, CheckCircle, ImageSquare, Trash, UserFocus, WarningCircle } from "@phosphor-icons/react";
+import {
+  ArrowCounterClockwise,
+  ArrowSquareOut,
+  BookmarkSimple,
+  CheckCircle,
+  Circle,
+  CircleNotch,
+  ImageSquare,
+  LinkSimple,
+  Star,
+  Trash,
+  UserFocus,
+  WarningCircle,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { formatNumber } from "@/components/display";
 import type { YoutubeVideo } from "@/lib/contracts";
 import type { FaceReferenceStatus } from "@/lib/face-references";
-import { THUMBNAIL_BRIEF_MAX, THUMBNAIL_REFERENCES_MAX, type ThumbnailRun, type ThumbnailVariant } from "@/lib/thumbnail-builder";
+import {
+  THUMBNAIL_BRIEF_MAX,
+  THUMBNAIL_REFERENCES_MAX,
+  THUMBNAIL_STAGES,
+  currentStage,
+  finishedImage,
+  hasLayerImage,
+  isLayerApproved,
+  isLegacyVariant,
+  latestLayerStage,
+  laterStages,
+  type ThumbnailRun,
+  type ThumbnailStage,
+  type ThumbnailVariant,
+} from "@/lib/thumbnail-builder";
 import type { ThumbnailReference } from "@/lib/thumbnail-library";
 
 type Bridge = "checking" | "online" | "offline" | "logged-out";
@@ -13,21 +40,52 @@ type Phase = "loading" | "ready" | "error";
 type Market = "all" | "en" | "de";
 
 type BuilderState = { runs: ThumbnailRun[]; faces: FaceReferenceStatus | null; phase: Phase };
+/** What one variant is doing right now; one task per variant at a time. */
+type VariantTask = { action: "render" | "approve" | "choose"; stage?: ThumbnailStage };
+type StepStatus = "open" | "rendering" | "rendered" | "approved" | "failed";
 type LibraryState = { references: ThumbnailReference[]; suggestions: YoutubeVideo[]; minFactor: number; phase: Phase };
 
 async function readJson<T>(response: Response): Promise<T & { error?: string }> {
   return (await response.json().catch(() => ({}))) as T & { error?: string };
 }
 
-/** Human label of a still: gesicht-06m56s-erklaerend → erklärend (06:56). */
+/** Human label of a face photo: gesicht-06m56s-erklaerend → erklärend (06:56), shooting-lachen-frontal → lachen frontal. */
 function faceLabel(id: string) {
+  const umlauts = (text: string) => text.replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü");
   const match = /(\d{2})m(\d{2})s-([a-z]+)/.exec(id);
-  if (!match) return id;
-  const mood = match[3].replace("ae", "ä").replace("oe", "ö").replace("ue", "ü");
-  return `${mood} (${match[1]}:${match[2]})`;
+  if (!match) return umlauts(id.replace(/^(shooting|gesicht|foto)-/, "").replace(/-/g, " "));
+  return `${umlauts(match[3])} (${match[1]}:${match[2]})`;
+}
+
+/** Badge on a reference thumbnail: the factor, or "Chris" for a link pick. */
+function factorBadge(reference: { factor: number; source?: "outlier" | "manual" }) {
+  return reference.source === "manual" ? "Chris" : `${reference.factor.toFixed(1)}x`;
 }
 
 const SUGGESTION_PAGE = 12;
+
+const STAGE_LABELS: Record<ThumbnailStage, string> = { background: "Hintergrund", person: "Person", text: "Text" };
+const STATUS_LABELS: Record<StepStatus, string> = { open: "offen", rendering: "rendert", rendered: "gerendert", approved: "freigegeben", failed: "Fehler" };
+
+function stepStatus(variant: ThumbnailVariant, stage: ThumbnailStage, task: VariantTask | undefined): StepStatus {
+  if (task?.action === "render" && task.stage === stage) return "rendering";
+  const layer = variant.layers?.[stage];
+  if (isLayerApproved(layer)) return "approved";
+  if (hasLayerImage(layer)) return "rendered";
+  return layer?.error ? "failed" : "open";
+}
+
+function StepIcon({ status }: { status: StepStatus }) {
+  if (status === "rendering") return <CircleNotch className="spin" size={13} />;
+  if (status === "approved") return <CheckCircle size={13} weight="fill" />;
+  if (status === "rendered") return <CheckCircle size={13} />;
+  if (status === "failed") return <WarningCircle size={13} weight="fill" />;
+  return <Circle size={13} />;
+}
+
+function variantKey(run: ThumbnailRun, variant: ThumbnailVariant) {
+  return `${run.id}/${variant.id}`;
+}
 
 /**
  * The YouTube Thumbnail-Builder inside Cover Lab: three 16:9 variants with
@@ -43,10 +101,15 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
   const [brief, setBrief] = useState("");
   const [picked, setPicked] = useState<string[] | null>(null);
   const [running, setRunning] = useState(false);
-  const [rendering, setRendering] = useState<string>("");
+  const [tasks, setTasks] = useState<Record<string, VariantTask>>({});
+  const [variantErrors, setVariantErrors] = useState<Record<string, string>>({});
+  /** The step Chris clicked per variant; without one the card shows the newest layer. */
+  const [views, setViews] = useState<Record<string, ThumbnailStage>>({});
   const [error, setError] = useState("");
   const [libraryError, setLibraryError] = useState("");
   const [busyId, setBusyId] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkNote, setLinkNote] = useState("");
   const [selectedRun, setSelectedRun] = useState("");
   const [suggestionLimit, setSuggestionLimit] = useState(SUGGESTION_PAGE);
 
@@ -110,22 +173,85 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
     }
   }
 
-  async function rerender(run: ThumbnailRun, variant: ThumbnailVariant) {
-    setRendering(`${run.id}/${variant.id}`);
-    setError("");
+  function setTask(key: string, task: VariantTask | null) {
+    setTasks((current) => {
+      const next = { ...current };
+      if (task) next[key] = task;
+      else delete next[key];
+      return next;
+    });
+  }
+
+  function setVariantError(key: string, message: string) {
+    setVariantErrors((current) => ({ ...current, [key]: message }));
+  }
+
+  function showStage(key: string, stage: ThumbnailStage | null) {
+    setViews((current) => {
+      const next = { ...current };
+      if (stage) next[key] = stage;
+      else delete next[key];
+      return next;
+    });
+  }
+
+  function applyRun(run: ThumbnailRun) {
+    setBuilder((current) => ({ ...current, runs: current.runs.map((candidate) => (candidate.id === run.id ? run : candidate)) }));
+  }
+
+  async function postRun(url: string, body: Record<string, string>) {
+    const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const payload = await readJson<{ run: ThumbnailRun }>(response);
+    if (!response.ok || !payload.run) throw new Error(payload.error || `Der Server antwortete mit HTTP ${response.status}.`);
+    return payload.run;
+  }
+
+  async function renderStage(run: ThumbnailRun, variant: ThumbnailVariant, stage: ThumbnailStage) {
+    const key = variantKey(run, variant);
+    setTask(key, { action: "render", stage });
+    setVariantError(key, "");
+    showStage(key, null);
     try {
-      const response = await fetch("/api/youtube/thumbnails/render", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ runId: run.id, variantId: variant.id }),
-      });
-      const payload = await readJson<{ run: ThumbnailRun }>(response);
-      if (!response.ok || !payload.run) throw new Error(payload.error || `Das Rendern antwortete mit HTTP ${response.status}.`);
-      setBuilder((current) => ({ ...current, runs: current.runs.map((candidate) => (candidate.id === payload.run.id ? payload.run : candidate)) }));
+      applyRun(await postRun("/api/youtube/thumbnails/render", { runId: run.id, variantId: variant.id, stage }));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Das Rendern ist fehlgeschlagen.");
+      setVariantError(key, reason instanceof Error ? reason.message : "Das Rendern ist fehlgeschlagen.");
+      // A first render stores its error on the layer; reload so the step shows it.
+      void loadBuilder();
     } finally {
-      setRendering("");
+      setTask(key, null);
+    }
+  }
+
+  /** Approves a layer and immediately renders the next one. */
+  async function approve(run: ThumbnailRun, variant: ThumbnailVariant, stage: ThumbnailStage) {
+    const key = variantKey(run, variant);
+    setTask(key, { action: "approve", stage });
+    setVariantError(key, "");
+    let approved: ThumbnailRun;
+    try {
+      approved = await postRun("/api/youtube/thumbnails/approve", { runId: run.id, variantId: variant.id, stage });
+      applyRun(approved);
+    } catch (reason) {
+      setVariantError(key, reason instanceof Error ? reason.message : "Freigeben ist fehlgeschlagen.");
+      setTask(key, null);
+      return;
+    }
+    const next = laterStages(stage)[0];
+    const fresh = approved.variants.find((candidate) => candidate.id === variant.id) ?? variant;
+    if (next) await renderStage(approved, fresh, next);
+    else setTask(key, null);
+  }
+
+  async function choose(run: ThumbnailRun, variant: ThumbnailVariant) {
+    const key = variantKey(run, variant);
+    setTask(key, { action: "choose" });
+    setVariantError(key, "");
+    try {
+      applyRun(await postRun("/api/youtube/thumbnails/choose", { runId: run.id, variantId: variant.id }));
+    } catch (reason) {
+      setVariantError(key, reason instanceof Error ? reason.message : "Wählen ist fehlgeschlagen.");
+    } finally {
+      setTask(key, null);
     }
   }
 
@@ -144,6 +270,28 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
       await loadLibrary(market);
     } catch (reason) {
       setLibraryError(reason instanceof Error ? reason.message : "Markieren ist fehlgeschlagen.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function addLink() {
+    setBusyId("link");
+    setLibraryError("");
+    try {
+      const response = await fetch("/api/youtube/thumbnails/library", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ manual: true, url: linkUrl.trim(), note: linkNote.trim() }),
+      });
+      const payload = await readJson<{ reference: ThumbnailReference }>(response);
+      if (!response.ok || !payload.reference) throw new Error(payload.error || `HTTP ${response.status}`);
+      if (picked && picked.length < THUMBNAIL_REFERENCES_MAX) setPicked([...picked, payload.reference.videoId]);
+      setLinkUrl("");
+      setLinkNote("");
+      await loadLibrary(market);
+    } catch (reason) {
+      setLibraryError(reason instanceof Error ? reason.message : "Der Link konnte nicht hinzugefügt werden.");
     } finally {
       setBusyId("");
     }
@@ -172,9 +320,9 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
           <div>
             <p className="kicker">YouTube · 16:9 · mit Gesicht</p>
             <h2>Thumbnail-Builder</h2>
-            <p>Drei Varianten für ein eigenes Video. GPT bekommt markierte Outlier-Thumbnails als Bildvorlage und Chris&apos; echte Standbilder als Gesicht. Jede Variante nennt die Outlier, die sie angeregt haben.</p>
+            <p>Drei Varianten für ein eigenes Video. GPT bekommt markierte Outlier-Thumbnails als Bildvorlage und Chris&apos; echte Standbilder als Gesicht. Jede Variante entsteht in drei Ebenen: Hintergrund, Person, Text. Du gibst jede Ebene frei, erst dann rendert die nächste.</p>
           </div>
-          <div className="next-refresh"><span>Prompt als JSON</span><strong>Planung und drei Renders laufen über den lokalen Codex-Bridge. Ein Lauf dauert drei bis fünf Minuten.</strong></div>
+          <div className="next-refresh"><span>Prompt als JSON</span><strong>Ein Lauf plant drei Varianten und rendert zuerst nur die drei Hintergründe, das dauert zwei bis vier Minuten. Person und Text folgen pro Variante nach deiner Freigabe.</strong></div>
         </div>
         <div className="thumb-status-row">
           <div className={`thumb-status ${faces?.count ? "ok" : "bad"}`}>
@@ -211,7 +359,7 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
                   return (
                     <button type="button" key={reference.videoId} className={active ? "thumb-pick active" : "thumb-pick"} onClick={() => togglePick(reference.videoId)} aria-pressed={active} title={reference.title}>
                       <img src={reference.thumbnailUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
-                      <b>{reference.factor.toFixed(1)}x</b>
+                      <b>{factorBadge(reference)}</b>
                       {active && <CheckCircle className="thumb-pick-check" size={16} weight="fill" />}
                     </button>
                   );
@@ -223,7 +371,7 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
         <div className="panel-foot">
           <span>Ein Fokus · max. vier Wörter · großes Gesicht · 16:9 mit freier Ecke unten rechts.</span>
           <button className="primary-button" type="button" onClick={generate} disabled={blocked}>
-            <ImageSquare size={15} /> {running ? "Plane und rendere…" : "3 Thumbnails erzeugen"}
+            <ImageSquare size={15} /> {running ? "Plane und rendere drei Hintergründe…" : "Planen und 3 Hintergründe rendern"}
           </button>
         </div>
         {error && <div className="strategy-error"><WarningCircle size={20} weight="fill" /><h3>Kein Thumbnail</h3><p>{error}</p></div>}
@@ -237,18 +385,87 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
           </select>
         )}
       </div>
-      {builder.phase === "ready" && !shown && <div className="empty-state">Noch keine Thumbnails. Titel eintragen, Vorlagen wählen, erzeugen.</div>}
+      {builder.phase === "loading" && <div className="empty-state">Lade Läufe…</div>}
+      {builder.phase === "error" && <div className="empty-state">Läufe konnten nicht geladen werden.</div>}
+      {builder.phase === "ready" && !shown && <div className="empty-state">Noch keine Thumbnails. Titel eintragen, Vorlagen wählen, Hintergründe rendern.</div>}
       {shown && (
         <div className="thumb-variant-grid">
           {shown.variants.map((variant, index) => {
-            const busy = rendering === `${shown.id}/${variant.id}`;
+            const key = variantKey(shown, variant);
+            const task = tasks[key];
+            const legacy = isLegacyVariant(variant);
+            const chosen = shown.chosenVariantId === variant.id;
+            const current = currentStage(variant);
+            const viewed = views[key] ?? latestLayerStage(variant);
+            const viewedLayer = viewed ? variant.layers?.[viewed] : undefined;
+            const imageUrl = legacy ? variant.imageUrl : hasLayerImage(viewedLayer) ? viewedLayer.imageUrl : undefined;
+            // A clicked, already approved earlier step can be rendered again; that drops the layers after it.
+            const clicked = views[key];
+            const focus = clicked && clicked !== current && isLayerApproved(variant.layers?.[clicked]) ? clicked : current;
+            const focusLayer = variant.layers?.[focus];
+            const dropped = laterStages(focus).filter((stage) => variant.layers?.[stage]);
+            const problem = variantErrors[key] || (task ? "" : focusLayer?.error ?? "");
+            const placeholder = task?.action === "render" && task.stage
+              ? `Rendere ${STAGE_LABELS[task.stage]}…`
+              : (legacy ? variant.error : variant.layers?.background?.error) ?? "Noch nicht gerendert";
+            const locked = Boolean(task) || bridgeDown;
             return (
-              <article className="thumb-variant" key={variant.id}>
+              <article className={chosen ? "thumb-variant chosen" : "thumb-variant"} key={variant.id}>
                 <div className="thumb-art">
-                  {variant.imageUrl ? <img src={variant.imageUrl} alt={`Variante ${index + 1}: ${variant.textOverlay}`} /> : <span>{variant.error ?? "Nicht gerendert"}</span>}
+                  {imageUrl ? <img src={imageUrl} alt={`Variante ${index + 1}: ${variant.textOverlay}`} /> : <span className="thumb-art-empty">{placeholder}</span>}
+                  {imageUrl && task?.action === "render" && task.stage && <em className="thumb-art-busy"><CircleNotch className="spin" size={12} /> Rendere {STAGE_LABELS[task.stage]}…</em>}
+                  {chosen && <strong className="thumb-chosen"><Star size={12} weight="fill" /> Gewählt</strong>}
                 </div>
                 <div className="thumb-variant-body">
                   <div className="cover-package-heading"><span className="rank">{String(index + 1).padStart(2, "0")}</span><h4>{variant.label}</h4></div>
+                  {legacy ? (
+                    <p className="thumb-legacy">Älterer Lauf: fertiges Bild in einem Durchgang, ohne Ebenen.</p>
+                  ) : (
+                    <ol className="thumb-steps" aria-label="Ebenen">
+                      {THUMBNAIL_STAGES.map((stage) => {
+                        const status = stepStatus(variant, stage, task);
+                        return (
+                          <li key={stage}>
+                            <button
+                              type="button"
+                              className={`thumb-step ${status}${viewed === stage ? " viewing" : ""}`}
+                              disabled={!hasLayerImage(variant.layers?.[stage])}
+                              aria-pressed={viewed === stage}
+                              onClick={() => showStage(key, stage)}
+                            >
+                              <StepIcon status={status} />
+                              <span>{STAGE_LABELS[stage]}</span>
+                              <small>{STATUS_LABELS[status]}</small>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
+                  {problem && <p className="yt-bad thumb-variant-error"><WarningCircle size={13} /> {problem}</p>}
+                  {finishedImage(variant) && (
+                    chosen ? (
+                      <p className="thumb-chosen-note"><Star size={13} weight="fill" /> Diese Variante ist gewählt.</p>
+                    ) : (
+                      <button className="primary-button thumb-choose" type="button" onClick={() => choose(shown, variant)} disabled={Boolean(task)}>
+                        <Star size={14} /> {task?.action === "choose" ? "Wähle…" : "Diese Variante wählen"}
+                      </button>
+                    )
+                  )}
+                  {!legacy && (
+                    <div className="thumb-actions">
+                      {focus === current && hasLayerImage(focusLayer) && !isLayerApproved(focusLayer) && (
+                        <button className="primary-button" type="button" onClick={() => approve(shown, variant, focus)} disabled={Boolean(task) || (bridgeDown && focus !== "text")}>
+                          <CheckCircle size={14} /> {task?.action === "approve" ? "Gebe frei…" : "Freigeben"}
+                        </button>
+                      )}
+                      <button className="secondary-button" type="button" onClick={() => renderStage(shown, variant, focus)} disabled={locked}>
+                        <ArrowCounterClockwise className={task?.action === "render" && task.stage === focus ? "spin" : ""} size={14} />
+                        {task?.action === "render" && task.stage === focus ? "Rendere…" : hasLayerImage(focusLayer) || focusLayer?.error ? `${STAGE_LABELS[focus]} neu rendern` : `${STAGE_LABELS[focus]} rendern`}
+                      </button>
+                      {dropped.length > 0 && <small className="thumb-actions-note">Verwirft {dropped.map((stage) => STAGE_LABELS[stage]).join(" und ")}.</small>}
+                    </div>
+                  )}
                   <p className="cover-overlay">„{variant.textOverlay}“</p>
                   <p className="thumb-concept">{variant.concept}</p>
                   <p className="thumb-face"><UserFocus size={12} /> Gesicht: {faceLabel(variant.face)}</p>
@@ -258,7 +475,7 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
                       <li key={source.videoId}>
                         <a href={source.url} target="_blank" rel="noreferrer" className="thumb-source-img">
                           <img src={source.thumbnailUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
-                          <b>{source.factor.toFixed(1)}x</b>
+                          <b>{factorBadge(source)}</b>
                         </a>
                         <div>
                           <a href={source.url} target="_blank" rel="noreferrer"><strong>{source.title}</strong> <ArrowSquareOut size={10} /></a>
@@ -272,9 +489,6 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
                     <summary>Bild-Prompt (JSON)</summary>
                     <pre>{JSON.stringify(variant.imagePrompt, null, 2)}</pre>
                   </details>
-                  <button className="secondary-button" type="button" onClick={() => rerender(shown, variant)} disabled={Boolean(rendering) || running || bridgeDown}>
-                    <ArrowCounterClockwise className={busy ? "spin" : ""} size={14} /> {busy ? "Rendere…" : "Neu rendern"}
-                  </button>
                 </div>
               </article>
             );
@@ -287,9 +501,14 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
           <div>
             <p className="kicker">Referenz-Bibliothek</p>
             <h2>{library.references.length} markierte Thumbnails</h2>
-            <p>Gute Outlier-Thumbnails als Vorlage. Markierte gehen als Bild in den Builder, entfernte nicht mehr. Jeder Eintrag hält die Zahlen zum Zeitpunkt der Markierung.</p>
+            <p>Gute Thumbnails als Vorlage: Outlier aus Signal Room oder per Link von dir gewählt. Markierte gehen als Bild in den Builder, entfernte nicht mehr. Jeder Eintrag hält die Zahlen zum Zeitpunkt der Markierung.</p>
           </div>
         </div>
+        <form className="thumb-link-form" onSubmit={(event) => { event.preventDefault(); void addLink(); }}>
+          <input value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="YouTube-Link eines Thumbnails, das dir gefällt" aria-label="YouTube-Link" />
+          <input value={linkNote} maxLength={300} onChange={(event) => setLinkNote(event.target.value)} placeholder="Ein Satz: Was gefällt dir daran?" aria-label="Was gefällt dir daran?" />
+          <button className="secondary-button" type="submit" disabled={!linkUrl.trim() || busyId === "link"}><LinkSimple size={13} /> {busyId === "link" ? "Hole Video…" : "Hinzufügen"}</button>
+        </form>
         {libraryError && <p className="yt-bad thumb-library-error"><WarningCircle size={13} /> {libraryError}</p>}
         {library.references.length > 0 && (
           <div className="thumb-library-grid">
@@ -297,10 +516,11 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
               <article className="thumb-ref" key={reference.videoId}>
                 <a href={reference.url} target="_blank" rel="noreferrer" className="thumb-ref-img">
                   <img src={reference.thumbnailUrl} alt="" loading="lazy" referrerPolicy="no-referrer" />
-                  <b>{reference.factor.toFixed(1)}x</b>
+                  <b>{factorBadge(reference)}</b>
                 </a>
                 <strong title={reference.title}>{reference.title}</strong>
                 <small>{reference.channelTitle} · {formatNumber(reference.views)} Aufrufe · {reference.market.toUpperCase()}</small>
+                {reference.note && <small className="thumb-ref-note">„{reference.note}“</small>}
                 <button className="ghost-button" type="button" disabled={busyId === reference.videoId} onClick={() => unmark(reference.videoId)}><Trash size={13} /> Entfernen</button>
               </article>
             ))}

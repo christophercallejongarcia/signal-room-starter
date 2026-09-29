@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  PERSON_LOOK,
   assertImageFiles,
   buildThumbnailImageInput,
   buildThumbnailPlanInput,
@@ -11,6 +12,7 @@ import {
   thumbnailPlanOutputSchema,
   validateFaces,
   validateThumbnailRequest,
+  validateThumbnailStage,
 } from "../bridge/thumbnails.mjs";
 
 const faces = [
@@ -91,6 +93,20 @@ test("the planner sees the reference thumbnails as images, never the stills", ()
   assert.deepEqual(input.slice(1), references.map((reference) => ({ type: "local_image", path: reference.path })));
 });
 
+test("Chris' picks carry his note and the rules reach the planner as binding", () => {
+  const picked = validateThumbnailRequest({
+    video: { title: "T" },
+    references: [{ ...references[0], source: "manual", note: "Helles Licht, echtes Lachen" }],
+    faces,
+    rules: "1. Mobil lesbar.",
+  });
+  const [text] = buildThumbnailPlanInput(picked);
+  assert.match(text.text, /"why": "picked by Chris as a style he likes"/);
+  assert.match(text.text, /"chrisSays": "Helles Licht, echtes Lachen"/);
+  assert.match(text.text, /<rules>\n1\. Mobil lesbar\.\n<\/rules>/);
+  assert.doesNotMatch(buildThumbnailPlanInput(request())[0].text, /<rules>/);
+});
+
 test("the plan is normalized: overlay wins over the prompt text, unknown ids fail", () => {
   const [first] = normalizeThumbnailPlan({ variants: [variant(), variant(), variant()] }, request());
   assert.equal(first.imagePrompt.text.content, "Welche Stufe bist du?");
@@ -98,15 +114,69 @@ test("the plan is normalized: overlay wins over the prompt text, unknown ids fai
   assert.throws(() => normalizeThumbnailPlan({ variants: [variant()] }, request()), /exactly 3/);
 });
 
-test("the render prompt is JSON and orders the images: chosen still, other stills, then style references", () => {
-  const [planned] = normalizeThumbnailPlan({ variants: [variant(), variant(), variant()] }, request());
-  const render = buildThumbnailImageInput(request(), planned);
-  assert.deepEqual(render.images, ["/stills/gesicht-06m56s-erklaerend.png", "/stills/gesicht-00m40s-aufmerksam.png", "/cache/AAAAAAAAAA2.jpg"]);
-  const json = JSON.parse(render.text.slice(render.text.indexOf("{")));
-  assert.equal(json.text.content, "Welche Stufe bist du?");
+const BASE = "/runs/run-20260928T200000Z-abcdef/variant-1-background.png";
+
+function planned() {
+  return normalizeThumbnailPlan({ variants: [variant({ textOverlay: "Größer denken" }), variant(), variant()] }, request())[0];
+}
+
+function stagePrompt(stage) {
+  const render = buildThumbnailImageInput({ ...request(), base: BASE }, planned(), stage);
+  assert.match(render.text, /The JSON below is the complete image prompt/);
+  return { render, json: JSON.parse(render.text.slice(render.text.indexOf("{"))) };
+}
+
+test("the render stage is background, person or text; person and text need an absolute base image", () => {
+  assert.deepEqual(validateThumbnailStage({ stage: "background", base: "/x.png" }), { stage: "background" });
+  assert.deepEqual(validateThumbnailStage({ stage: "person", base: BASE }), { stage: "person", base: BASE });
+  assert.throws(() => validateThumbnailStage({ stage: "final" }), /stage must be one of background, person, text/);
+  assert.throws(() => validateThumbnailStage({ stage: "text" }), /base must be an absolute PNG, JPEG or WebP path/);
+  assert.throws(() => validateThumbnailStage({ stage: "person", base: "relativ/geheim.png" }), (error) => /base must be/.test(error.message) && !error.message.includes("geheim"));
+  assert.throws(() => buildThumbnailImageInput(request(), planned(), "person"), /needs the approved previous layer/);
+});
+
+test("the background stage forbids person and text and sends only the inspiring thumbnails as style", () => {
+  const { render, json } = stagePrompt("background");
+  assert.deepEqual(render.images, ["/cache/AAAAAAAAAA2.jpg"]);
+  assert.match(json.rule, /No person, no face, no hands, no text or letters/);
+  assert.match(json.inputImages.style, /^Image 1: Outlier thumbnails from other creators, style reference only/);
+  assert.match(json.emptyArea, /side where Chris will stand \(see composition\) calm and empty/);
+  assert.equal(json.keyVisual, "Treppe");
+  assert.equal(json.composition, "Drittel");
   assert.equal(json.canvas.aspectRatio, "16:9");
-  assert.match(json.inputImages.face, /Images 1-2: real photos of Chris/);
-  assert.match(json.inputImages.style, /Image 3: Outlier thumbnails/);
-  assert.ok(json.avoid.includes("letterbox bars, borders or frames"));
+  assert.ok(json.avoid.includes("any person, face, hands or body parts"));
+  assert.ok(json.avoid.includes("any text, letters or numbers"));
+  assert.equal(json.look, undefined);
+  assert.equal(json.text, undefined);
+  assert.equal(render.text.includes("Größer denken"), false, "the words come later");
+  assert.equal(render.text.includes(PERSON_LOOK.skin), false);
+});
+
+test("the person stage puts the approved background first, then the stills, and applies the person look", () => {
+  const { render, json } = stagePrompt("person");
+  assert.deepEqual(render.images, [BASE, "/stills/gesicht-06m56s-erklaerend.png", "/stills/gesicht-00m40s-aufmerksam.png"]);
+  assert.match(json.inputImages.base, /^Image 1: the approved background\. Keep it unchanged except where Chris is placed/);
+  assert.match(json.inputImages.face, /^Images 2-3: real photos of Chris/);
+  assert.deepEqual(json.person, { subject: "Chris rechts", expression: "erklärend", composition: "Drittel" });
+  assert.deepEqual(json.look, PERSON_LOOK);
+  assert.match(json.look.skin, /never pale or grey/);
+  assert.match(json.look.face, /3 to 5 percent narrower/);
+  assert.match(json.look.identity, /clearly recognizable/);
+  for (const item of ["pale or grey skin", "flat lighting", "wide-angle distortion of the face"]) assert.ok(json.avoid.includes(item), item);
+  assert.match(json.rule, /No text/);
+  assert.equal(render.text.includes("Größer denken"), false);
   assert.equal(render.text.includes("/stills/"), false, "paths travel as image input, not inside the prompt");
+  assert.equal(render.text.includes(BASE), false);
+});
+
+test("the text stage sees only the approved person layer and adds exactly the overlay", () => {
+  const { render, json } = stagePrompt("text");
+  assert.deepEqual(render.images, [BASE]);
+  assert.match(json.inputImages.base, /Change nothing else in the image/);
+  assert.equal(json.text.content, "Größer denken");
+  assert.match(json.text.rule, /spelled exactly as given including umlauts/);
+  assert.equal(json.text.placement, "links oben");
+  assert.equal(json.look, undefined);
+  assert.equal(render.text.includes(PERSON_LOOK.face), false);
+  assert.ok(json.avoid.includes("any words other than text.content"));
 });

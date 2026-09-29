@@ -2,9 +2,10 @@ import type { YoutubeVideo } from "./contracts";
 import { bounded } from "./ideas.ts";
 
 /**
- * The Referenz-Bibliothek: Outlier thumbnails Chris marked as good examples.
- * Each entry is a snapshot of the Outlier row at marking time, so a later
- * refresh never changes why a thumbnail was kept. Until a Convex table exists
+ * The Referenz-Bibliothek: thumbnails Chris marked as good examples. Most are
+ * Outliers Signal Room measured; "manual" entries come from a YouTube link Chris
+ * picked himself (no channel median, so no factor). Each entry is a snapshot at
+ * marking time, so a later refresh never changes why a thumbnail was kept. Until a Convex table exists
  * the library is one JSON file in data/ (lib/adapters/storage/thumbnail-store.ts).
  */
 
@@ -22,6 +23,10 @@ export type ThumbnailReference = {
   publishedAt: string;
   measuredAt: string;
   markedAt: string;
+  /** "outlier" (default, measured factor) or "manual" (picked by link, factor 0). */
+  source?: "outlier" | "manual";
+  /** Chris' one sentence on what he likes about it. Goes to the planner. */
+  note?: string;
 };
 
 export type ThumbnailLibrary = { references: ThumbnailReference[] };
@@ -48,16 +53,43 @@ export function isYoutubeThumbnailUrl(value: unknown): value is string {
   }
 }
 
-/** The browser sends only the id (and the market it browsed); every other field comes from storage. */
-export function parseReferenceMark(body: unknown): { videoId: string; market?: "de" | "en" } {
-  const input = (body ?? {}) as Record<string, unknown>;
-  if (!isYoutubeVideoId(input.videoId)) throw new Error("videoId must be an 11-character YouTube id.");
-  const market = input.market;
-  if (market !== undefined && market !== "de" && market !== "en") throw new Error(`market must be "de" or "en".`);
-  return { videoId: input.videoId, ...(market ? { market } : {}) };
+export const REFERENCE_NOTE_MAX = 300;
+
+/** A watch, youtu.be or shorts link, or a bare id, reduced to the video id. */
+export function youtubeVideoIdFrom(value: unknown): string | null {
+  if (isYoutubeVideoId(value)) return value;
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.replace(/^(www|m)\./, "");
+    const id = host === "youtu.be"
+      ? url.pathname.slice(1)
+      : host === "youtube.com"
+        ? url.searchParams.get("v") ?? url.pathname.match(/^\/(?:shorts|live)\/([^/]+)/)?.[1]
+        : null;
+    return isYoutubeVideoId(id) ? id : null;
+  } catch {
+    return null;
+  }
 }
 
-export function referenceFromOutlier(video: YoutubeVideo, now: string): ThumbnailReference {
+/**
+ * The browser sends an id (and the market it browsed) for an Outlier, or a
+ * YouTube link with manual: true; every other field comes from storage or the
+ * YouTube Data API. The note is Chris' own sentence.
+ */
+export function parseReferenceMark(body: unknown): { videoId: string; market?: "de" | "en"; manual: boolean; note?: string } {
+  const input = (body ?? {}) as Record<string, unknown>;
+  const manual = input.manual === true;
+  const videoId = manual ? youtubeVideoIdFrom(input.url ?? input.videoId) : isYoutubeVideoId(input.videoId) ? input.videoId : null;
+  if (!videoId) throw new Error(manual ? "url must be a YouTube video link." : "videoId must be an 11-character YouTube id.");
+  const market = input.market;
+  if (market !== undefined && market !== "de" && market !== "en") throw new Error(`market must be "de" or "en".`);
+  const note = bounded(input.note, REFERENCE_NOTE_MAX);
+  return { videoId, manual, ...(market ? { market } : {}), ...(note ? { note } : {}) };
+}
+
+export function referenceFromOutlier(video: YoutubeVideo, now: string, note?: string): ThumbnailReference {
   if (!isYoutubeVideoId(video.videoId)) throw new Error("The Outlier has no valid YouTube id.");
   if (!isYoutubeThumbnailUrl(video.thumbnailUrl)) throw new Error("The Outlier has no i.ytimg.com thumbnail.");
   return {
@@ -74,6 +106,34 @@ export function referenceFromOutlier(video: YoutubeVideo, now: string): Thumbnai
     publishedAt: video.publishedAt,
     measuredAt: video.measuredAt,
     markedAt: now,
+    source: "outlier",
+    ...(note ? { note } : {}),
+  };
+}
+
+/** A manually picked video as the YouTube Data API reports it. No median, so no factor. */
+export function manualReference(
+  video: { videoId: string; title: string; channelTitle: string; thumbnailUrl?: string; views: number | null; publishedAt: string; market?: "de" | "en" },
+  now: string,
+  note?: string,
+): ThumbnailReference {
+  if (!isYoutubeVideoId(video.videoId)) throw new Error("The video has no valid YouTube id.");
+  if (!isYoutubeThumbnailUrl(video.thumbnailUrl)) throw new Error("The video has no i.ytimg.com thumbnail.");
+  return {
+    videoId: video.videoId,
+    title: bounded(video.title, 200),
+    channelTitle: bounded(video.channelTitle, 120),
+    url: `https://www.youtube.com/watch?v=${video.videoId}`,
+    thumbnailUrl: video.thumbnailUrl,
+    factor: 0,
+    views: video.views ?? 0,
+    channelMedian: 0,
+    market: video.market ?? "en",
+    publishedAt: video.publishedAt,
+    measuredAt: now,
+    markedAt: now,
+    source: "manual",
+    ...(note ? { note } : {}),
   };
 }
 

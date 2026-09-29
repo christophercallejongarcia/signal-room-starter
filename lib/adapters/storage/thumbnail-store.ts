@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { isThumbnailRunId, isThumbnailVariantId, thumbnailReferenceNote, type ThumbnailRun } from "../../thumbnail-builder.ts";
+import {
+  finishedImage,
+  isThumbnailRunId,
+  isThumbnailStage,
+  isThumbnailVariantId,
+  thumbnailReferenceNote,
+  type ThumbnailRun,
+  type ThumbnailStage,
+} from "../../thumbnail-builder.ts";
 import { isYoutubeThumbnailUrl, isYoutubeVideoId, normalizeLibrary, type ThumbnailLibrary, type ThumbnailReference } from "../../thumbnail-library.ts";
 import { sniffImageType, type ImageType } from "./cover-cache.ts";
 
@@ -9,7 +17,9 @@ import { sniffImageType, type ImageType } from "./cover-cache.ts";
  * File store of the Thumbnail-Builder until the Referenz-Bibliothek gets a
  * Convex table (proposal with Thread 1). Everything lives in the ignored
  * data/youtube-thumbnails folder: library.json, the cached reference images
- * the Bridge reads, and one folder per run with run.json and the variants.
+ * the Bridge reads, and one folder per run with run.json and the images:
+ * <variantId>-<stage>.png per layer, <variantId>.png for the finished image of
+ * runs from before the layer flow.
  */
 
 export const THUMBNAIL_DIR = path.join(process.cwd(), "data", "youtube-thumbnails");
@@ -82,28 +92,47 @@ function runDirectory(runId: string, dir: string) {
   return path.join(dir, "runs", runId);
 }
 
-/** Writes one variant image below the run folder and returns its repo-relative path. */
-export async function writeVariantImage(runId: string, variantId: string, bytes: Uint8Array, options: StoreOptions = {}) {
-  const dir = options.dir ?? THUMBNAIL_DIR;
+/** File stem of one image; no stage is the legacy finished image. Ids are checked before a path is built. */
+function imageStem(variantId: string, stage?: ThumbnailStage) {
   if (!isThumbnailVariantId(variantId)) throw new Error("Thumbnail variant id is invalid.");
+  if (stage !== undefined && !isThumbnailStage(stage)) throw new Error("Thumbnail stage is invalid.");
+  return stage ? `${variantId}-${stage}` : variantId;
+}
+
+/** Writes one layer (or, without a stage, a finished image) below the run folder and returns its repo-relative path. */
+export async function writeVariantImage(runId: string, variantId: string, bytes: Uint8Array, options: StoreOptions & { stage?: ThumbnailStage } = {}) {
+  const dir = options.dir ?? THUMBNAIL_DIR;
+  const stem = imageStem(variantId, options.stage);
   if (bytes.length === 0 || bytes.length > MAX_BYTES) throw new Error("Generated thumbnail is too large.");
   const type = sniffImageType(bytes);
   if (!type) throw new Error("Generated thumbnail is not a supported image.");
   const folder = runDirectory(runId, dir);
-  const file = path.join(folder, `${variantId}.${EXTENSIONS[type]}`);
+  const file = path.join(folder, `${stem}.${EXTENSIONS[type]}`);
   for (const other of Object.values(EXTENSIONS)) {
-    if (other !== EXTENSIONS[type]) await rm(path.join(folder, `${variantId}.${other}`), { force: true });
+    if (other !== EXTENSIONS[type]) await rm(path.join(folder, `${stem}.${other}`), { force: true });
   }
   await writeAtomic(file, bytes);
   return { file, imagePath: path.relative(process.cwd(), file).split(path.sep).join("/"), type };
 }
 
-export async function readVariantImage(runId: string, variantId: string, options: StoreOptions = {}) {
-  if (!isThumbnailRunId(runId) || !isThumbnailVariantId(variantId)) return null;
+/** Absolute path of a stored image, for the Bridge only; null when there is none. */
+export async function variantImageFile(runId: string, variantId: string, options: StoreOptions & { stage?: ThumbnailStage } = {}) {
+  if (!isThumbnailRunId(runId) || !isThumbnailVariantId(variantId) || (options.stage !== undefined && !isThumbnailStage(options.stage))) return null;
+  const folder = runDirectory(runId, options.dir ?? THUMBNAIL_DIR);
+  for (const extension of Object.values(EXTENSIONS)) {
+    const file = path.join(folder, `${imageStem(variantId, options.stage)}.${extension}`);
+    const details = await stat(file).catch(() => null);
+    if (details?.isFile() && details.size > 0) return file;
+  }
+  return null;
+}
+
+export async function readVariantImage(runId: string, variantId: string, options: StoreOptions & { stage?: ThumbnailStage } = {}) {
+  if (!isThumbnailRunId(runId) || !isThumbnailVariantId(variantId) || (options.stage !== undefined && !isThumbnailStage(options.stage))) return null;
   const folder = runDirectory(runId, options.dir ?? THUMBNAIL_DIR);
   for (const extension of Object.values(EXTENSIONS)) {
     try {
-      const bytes = await readFile(path.join(folder, `${variantId}.${extension}`));
+      const bytes = await readFile(path.join(folder, `${imageStem(variantId, options.stage)}.${extension}`));
       const type = sniffImageType(bytes);
       if (type) return { bytes, type };
     } catch {
@@ -111,6 +140,13 @@ export async function readVariantImage(runId: string, variantId: string, options
     }
   }
   return null;
+}
+
+/** Deletes one layer's image in every extension. */
+export async function removeVariantImage(runId: string, variantId: string, stage: ThumbnailStage, options: StoreOptions = {}) {
+  const folder = runDirectory(runId, options.dir ?? THUMBNAIL_DIR);
+  const stem = imageStem(variantId, stage);
+  for (const extension of Object.values(EXTENSIONS)) await rm(path.join(folder, `${stem}.${extension}`), { force: true });
 }
 
 export async function saveRun(run: ThumbnailRun, options: StoreOptions = {}) {
@@ -137,8 +173,10 @@ export async function listRuns(options: StoreOptions = {}): Promise<ThumbnailRun
 }
 
 /**
- * Copies a run's rendered variants into a folder outside the app (Chris' Ablage)
- * as variante-<n>.<ext> plus verweise.md naming the Outliers per variant.
+ * Copies a run's finished variants into a folder outside the app (Chris' Ablage)
+ * as variante-<n>.<ext> plus verweise.md naming the Outliers per variant and
+ * the one Chris chose. Finished means the approved text layer, or the finished
+ * image of a run from before the layer flow.
  */
 export async function exportRun(runId: string, target: string, options: StoreOptions = {}) {
   if (!path.isAbsolute(target)) throw new Error("The export folder must be an absolute path.");
@@ -147,7 +185,9 @@ export async function exportRun(runId: string, target: string, options: StoreOpt
   await mkdir(target, { recursive: true });
   const files: Record<string, string> = {};
   for (const [index, variant] of run.variants.entries()) {
-    const image = await readVariantImage(run.id, variant.id, options);
+    const finished = finishedImage(variant);
+    if (!finished) continue;
+    const image = await readVariantImage(run.id, variant.id, { ...options, ...(finished.stage ? { stage: finished.stage } : {}) });
     if (!image) continue;
     const name = `variante-${index + 1}.${EXTENSIONS[image.type]}`;
     await writeFile(path.join(target, name), image.bytes);

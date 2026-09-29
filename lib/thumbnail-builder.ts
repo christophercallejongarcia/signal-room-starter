@@ -8,7 +8,9 @@ import { isYoutubeVideoId, type ThumbnailReference } from "./thumbnail-library.t
  * videos. It builds on Cover Lab (same Bridge, same GPT-Image render in an
  * isolated workspace), adds Outlier thumbnails from the Referenz-Bibliothek as
  * image input, Chris' stills as the face, and a JSON image prompt per variant.
- * Every variant names the Outlier thumbnails it borrowed from.
+ * Every variant names the Outlier thumbnails it borrowed from. A variant is
+ * built in three layers that Chris approves one at a time: background, then
+ * Chris on it, then the words.
  */
 
 export const THUMBNAIL_VARIANT_COUNT = 3;
@@ -28,6 +30,10 @@ export type ThumbnailRequest = {
   /** Library ids to offer; empty means the newest THUMBNAIL_REFERENCES_MAX entries. */
   referenceIds: string[];
 };
+
+/** Layer order of the Ebenen-Ablauf; each stage renders on top of the approved previous one. */
+export const THUMBNAIL_STAGES = ["background", "person", "text"] as const;
+export type ThumbnailStage = (typeof THUMBNAIL_STAGES)[number];
 
 export type ThumbnailImagePrompt = {
   subject: string;
@@ -49,8 +55,27 @@ export type ThumbnailInspiration = {
   thumbnailUrl: string;
   factor: number;
   views: number;
+  /** "manual" when Chris picked the thumbnail by link; then factor is 0. */
+  source?: "outlier" | "manual";
   /** What this variant took from the Outlier thumbnail, in the planner's words. */
   borrowed: string;
+};
+
+/** "12,3x Kanal-Median" for a measured Outlier, "von Chris gewählt" for a link pick. */
+export function referenceStrength(reference: { factor: number; source?: "outlier" | "manual" }) {
+  if (reference.source === "manual") return "von Chris gewählt";
+  return `${reference.factor.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}x Kanal-Median`;
+}
+
+/** One rendered layer. A failed first render keeps only renderedAt and error. */
+export type ThumbnailLayer = {
+  imagePath?: string;
+  imageUrl?: string;
+  width?: number;
+  height?: number;
+  renderedAt: string;
+  approvedAt?: string;
+  error?: string;
 };
 
 export type ThumbnailVariant = {
@@ -62,7 +87,9 @@ export type ThumbnailVariant = {
   face: string;
   inspiredBy: ThumbnailInspiration[];
   imagePrompt: ThumbnailImagePrompt;
-  /** Missing while the render failed; the variant can be rendered again from its stored plan. */
+  /** Layer flow; missing on runs from before it, which only carry the finished image below. */
+  layers?: Partial<Record<ThumbnailStage, ThumbnailLayer>>;
+  /** Legacy finished image (person, text and background in one render), read-only. */
   imagePath?: string;
   imageUrl?: string;
   width?: number;
@@ -80,7 +107,11 @@ export type ThumbnailRun = {
   createdAt: string;
   referenceIds: string[];
   faceCount: number;
+  /** File name of the rule set the planner followed, if any (SIGNAL_ROOM_THUMBNAIL_RULES). */
+  rulesSource?: string;
   variants: ThumbnailVariant[];
+  /** The variant Chris picked; needs an approved text layer or a legacy finished image. */
+  chosenVariantId?: string;
 };
 
 export type ThumbnailRenderImage = { mimeType: "image/png" | "image/jpeg" | "image/webp"; data: string };
@@ -113,12 +144,72 @@ export function parseThumbnailRequest(body: unknown): ThumbnailRequest {
   return { title, brief, referenceIds };
 }
 
-/** POST /api/youtube/thumbnails/render: one stored variant rendered again from its plan. */
-export function parseRenderRequest(body: unknown): { runId: string; variantId: string } {
+/** POST /api/youtube/thumbnails/choose: { runId, variantId }. */
+export function parseVariantRequest(body: unknown): { runId: string; variantId: string } {
   const input = isObject(body) ? body : {};
   if (!isThumbnailRunId(input.runId)) throw new Error("runId is invalid.");
   if (!isThumbnailVariantId(input.variantId)) throw new Error("variantId is invalid.");
   return { runId: input.runId, variantId: input.variantId };
+}
+
+/** POST /api/youtube/thumbnails/render and /approve: { runId, variantId, stage }. */
+export function parseStageRequest(body: unknown): { runId: string; variantId: string; stage: ThumbnailStage } {
+  const ids = parseVariantRequest(body);
+  const stage = isObject(body) ? body.stage : undefined;
+  if (!isThumbnailStage(stage)) throw new Error(`stage must be one of ${THUMBNAIL_STAGES.join(", ")}.`);
+  return { ...ids, stage };
+}
+
+export function isThumbnailStage(value: unknown): value is ThumbnailStage {
+  return typeof value === "string" && (THUMBNAIL_STAGES as readonly string[]).includes(value);
+}
+
+/** Runs from before the layer flow: one finished image per variant, no layers. */
+export function isLegacyVariant(variant: ThumbnailVariant) {
+  return variant.layers === undefined;
+}
+
+/** A layer counts once it has an image and no error. */
+export function hasLayerImage(layer: ThumbnailLayer | undefined): layer is ThumbnailLayer & { imagePath: string; imageUrl: string } {
+  return Boolean(layer?.imagePath && layer.imageUrl && !layer.error);
+}
+
+export function isLayerApproved(layer: ThumbnailLayer | undefined) {
+  return hasLayerImage(layer) && Boolean(layer.approvedAt);
+}
+
+/** The stages after this one; re-rendering a stage drops them. */
+export function laterStages(stage: ThumbnailStage): ThumbnailStage[] {
+  return THUMBNAIL_STAGES.slice(THUMBNAIL_STAGES.indexOf(stage) + 1);
+}
+
+export function previousStage(stage: ThumbnailStage): ThumbnailStage | undefined {
+  return THUMBNAIL_STAGES[THUMBNAIL_STAGES.indexOf(stage) - 1];
+}
+
+/** Why a stage cannot render yet, in plain words; null when it may. */
+export function stageBlocker(variant: ThumbnailVariant, stage: ThumbnailStage): string | null {
+  if (isLegacyVariant(variant)) return "This variant comes from a run before the layer flow and is read-only.";
+  const previous = previousStage(stage);
+  if (previous && !isLayerApproved(variant.layers?.[previous])) return `Approve the ${previous} layer before rendering ${stage}.`;
+  return null;
+}
+
+/** The first stage not approved yet; text once everything is approved. */
+export function currentStage(variant: ThumbnailVariant): ThumbnailStage {
+  return THUMBNAIL_STAGES.find((stage) => !isLayerApproved(variant.layers?.[stage])) ?? "text";
+}
+
+/** The newest layer with an image, for the big picture on the card. */
+export function latestLayerStage(variant: ThumbnailVariant): ThumbnailStage | undefined {
+  return [...THUMBNAIL_STAGES].reverse().find((stage) => hasLayerImage(variant.layers?.[stage]));
+}
+
+/** The finished thumbnail: the approved text layer, or the legacy image of an older run. */
+export function finishedImage(variant: ThumbnailVariant): { stage?: ThumbnailStage; imagePath: string } | null {
+  if (isLegacyVariant(variant)) return variant.imagePath && !variant.error ? { imagePath: variant.imagePath } : null;
+  const text = variant.layers?.text;
+  return isLayerApproved(text) && text?.imagePath ? { stage: "text", imagePath: text.imagePath } : null;
 }
 
 /** The requested references in library order, or the newest marks when none were picked. */
@@ -220,6 +311,7 @@ export function inspirationFor(entries: { videoId: string; borrowed: string }[],
       thumbnailUrl: reference.thumbnailUrl,
       factor: reference.factor,
       views: reference.views,
+      ...(reference.source === "manual" ? { source: "manual" as const } : {}),
       borrowed: entry.borrowed,
     }];
   });
@@ -240,8 +332,10 @@ export function newThumbnailRunId(now: Date, random = Math.random) {
   return `run-${stamp}-${suffix}`;
 }
 
-export function thumbnailImageUrl(runId: string, variantId: string) {
-  return `/api/youtube/thumbnails/image/${runId}/${variantId}`;
+/** Without a stage it is the legacy finished image. */
+export function thumbnailImageUrl(runId: string, variantId: string, stage?: ThumbnailStage) {
+  const url = `/api/youtube/thumbnails/image/${runId}/${variantId}`;
+  return stage ? `${url}?stage=${stage}` : url;
 }
 
 /** Short Markdown note for the Ablage: which Outlier thumbnails inspired which variant. */
@@ -252,16 +346,19 @@ export function thumbnailReferenceNote(run: ThumbnailRun, files: Record<string, 
     `Erzeugt am ${run.createdAt.slice(0, 10)} im Signal-Room-Thumbnail-Builder (Lauf ${run.id}), 16:9, mit Chris' Standbildern als Gesicht.`,
     "",
   ];
+  const chosen = run.variants.findIndex((variant) => variant.id === run.chosenVariantId);
+  if (chosen >= 0) lines.push(`Gewählt von Chris: Variante ${chosen + 1}.`, "");
   run.variants.forEach((variant, index) => {
-    lines.push(`## Variante ${index + 1}: ${variant.label}`, "");
-    lines.push(`Datei: ${files[variant.id] ?? variant.imagePath ?? "nicht gerendert"}`);
+    const title = `## Variante ${index + 1}: ${variant.label}`;
+    lines.push(variant.id === run.chosenVariantId ? `${title} (Gewählt von Chris)` : title, "");
+    const fallback = finishedImage(variant)?.imagePath ?? (isLegacyVariant(variant) ? "nicht gerendert" : "Text-Ebene noch nicht freigegeben");
+    lines.push(`Datei: ${files[variant.id] ?? fallback}`);
     lines.push(`Text im Bild: "${variant.textOverlay}"`);
     lines.push(`Idee: ${variant.concept}`);
     lines.push(`Gesicht: ${variant.face}`, "");
     lines.push("Angeregt durch diese Outlier:", "");
     for (const source of variant.inspiredBy) {
-      const factor = source.factor.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-      lines.push(`- ${source.title} (${source.channelTitle}), ${factor}x Kanal-Median, ${source.views.toLocaleString("de-DE")} Aufrufe. ${source.url}`);
+      lines.push(`- ${source.title} (${source.channelTitle}), ${referenceStrength(source)}, ${source.views.toLocaleString("de-DE")} Aufrufe. ${source.url}`);
       lines.push(`  Übernommen: ${source.borrowed}`);
     }
     lines.push("");

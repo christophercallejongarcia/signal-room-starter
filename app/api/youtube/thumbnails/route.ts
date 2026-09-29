@@ -11,7 +11,7 @@ export async function GET() {
   return NextResponse.json({ runs, faces });
 }
 
-/** Plans and renders three 16:9 variants: { title, brief?, referenceIds? }. */
+/** Plans three 16:9 variants and renders their backgrounds: { title, brief?, referenceIds? }. */
 export async function POST(request: Request) {
   try {
     const run = await runThumbnailBuilder(await request.json().catch(() => ({})));

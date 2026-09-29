@@ -1,18 +1,30 @@
 import { STRATEGY_BRIDGE_URL } from "./config.ts";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { cropPngToRatio } from "./cover-crop.ts";
+import { createYoutubeClient, fetchVideos, YoutubeKeyMissingError } from "./adapters/sources/youtube-data-api.ts";
 import { loadFaceReferences, type FaceReference } from "./face-references.ts";
 import {
   THUMBNAIL_VARIANT_COUNT,
+  finishedImage,
+  hasLayerImage,
   inspirationFor,
+  isLegacyVariant,
+  laterStages,
   newThumbnailRunId,
   parseRenderImage,
-  parseRenderRequest,
+  parseStageRequest,
   parseThumbnailPlan,
   parseThumbnailRequest,
+  parseVariantRequest,
   pickReferences,
+  previousStage,
+  stageBlocker,
   thumbnailImageUrl,
+  type ThumbnailLayer,
   type ThumbnailPlanVariant,
   type ThumbnailRun,
+  type ThumbnailStage,
   type ThumbnailVariant,
 } from "./thumbnail-builder.ts";
 import type { StorageAdapter, YoutubeVideo } from "./contracts.ts";
@@ -21,6 +33,7 @@ import {
   addReference,
   isYoutubeThumbnailUrl,
   isYoutubeVideoId,
+  manualReference,
   parseReferenceMark,
   referenceFromOutlier,
   removeReference,
@@ -38,11 +51,28 @@ export class ThumbnailRunError extends Error {
   }
 }
 
-type BridgeReference = { id: string; title: string; channelTitle: string; factor: number; views: number; path: string };
-type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[] };
+type BridgeReference = { id: string; title: string; channelTitle: string; factor: number; views: number; source?: "manual"; note?: string; path: string };
+type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[]; rules?: string };
+
+/** Chris' thumbnail playbook, short form, sent to the planner as binding rules. */
+export const THUMBNAIL_RULES_MAX = 8_000;
+
+/**
+ * Reads the rule file named in SIGNAL_ROOM_THUMBNAIL_RULES (an absolute
+ * Markdown path, e.g. the YT-OS playbook). Unset or unreadable means no rules;
+ * a run never fails over it.
+ */
+export async function loadThumbnailRules(env: Record<string, string | undefined> = process.env) {
+  const file = env.SIGNAL_ROOM_THUMBNAIL_RULES?.trim();
+  if (!file || !path.isAbsolute(file) || path.extname(file).toLowerCase() !== ".md") return undefined;
+  const text = await readFile(file, "utf8").catch(() => "");
+  const bounded = text.replace(/\r\n?/g, "\n").trim().slice(0, THUMBNAIL_RULES_MAX);
+  return bounded ? { text: bounded, source: path.basename(file) } : undefined;
+}
 
 export type ThumbnailRunDeps = {
   faces?: () => Promise<FaceReference[]>;
+  rules?: () => Promise<{ text: string; source: string } | undefined>;
   bridge?: (route: "plan" | "render", body: unknown) => Promise<unknown>;
   cacheReference?: (reference: ThumbnailReference) => Promise<string>;
   now?: () => Date;
@@ -93,6 +123,8 @@ async function bridgeReferences(references: ThumbnailReference[], cache: (refere
     channelTitle: reference.channelTitle,
     factor: reference.factor,
     views: reference.views,
+    ...(reference.source === "manual" ? { source: "manual" as const } : {}),
+    ...(reference.note ? { note: reference.note } : {}),
     path: await cache(reference),
   })));
   const ready = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
@@ -100,15 +132,19 @@ async function bridgeReferences(references: ThumbnailReference[], cache: (refere
   return ready;
 }
 
-/** Decodes, crops to 16:9 and stores one render; returns the variant's image fields. */
-async function persistRender(runId: string, variantId: string, payload: unknown, now: string, dir?: string) {
+/** Decodes and crops one render to 16:9; nothing is written yet. */
+function fitRender(payload: unknown) {
   const image = parseRenderImage(payload);
   const bytes = Buffer.from(image.data, "base64");
-  const fitted = image.mimeType === "image/png" ? cropPngToRatio(bytes, 16, 9) : { bytes, width: undefined, height: undefined };
-  const saved = await store.writeVariantImage(runId, variantId, fitted.bytes, { dir });
+  return image.mimeType === "image/png" ? cropPngToRatio(bytes, 16, 9) : { bytes, width: undefined, height: undefined };
+}
+
+/** Stores one fitted layer image; returns the layer. */
+async function persistLayer(runId: string, variantId: string, stage: ThumbnailStage, fitted: ReturnType<typeof fitRender>, now: string, dir?: string): Promise<ThumbnailLayer> {
+  const saved = await store.writeVariantImage(runId, variantId, fitted.bytes, { dir, stage });
   return {
     imagePath: saved.imagePath,
-    imageUrl: `${thumbnailImageUrl(runId, variantId)}?v=${encodeURIComponent(now)}`,
+    imageUrl: `${thumbnailImageUrl(runId, variantId, stage)}&v=${encodeURIComponent(now)}`,
     ...(fitted.width ? { width: fitted.width, height: fitted.height } : {}),
     renderedAt: now,
   };
@@ -125,27 +161,45 @@ function planForBridge(variant: ThumbnailVariant | ThumbnailPlanVariant) {
   };
 }
 
-async function renderVariant(
-  runId: string,
-  variant: ThumbnailVariant,
-  input: BridgeInput,
-  bridge: NonNullable<ThumbnailRunDeps["bridge"]>,
-  now: () => Date,
-  dir?: string,
-): Promise<ThumbnailVariant> {
-  try {
-    const payload = await bridge("render", { ...input, variant: planForBridge(variant) });
-    const { error: _previous, ...rest } = variant;
-    return { ...rest, ...(await persistRender(runId, variant.id, payload, now().toISOString(), dir)) };
-  } catch (error) {
-    return { ...variant, error: error instanceof Error ? error.message : "The render failed." };
-  }
+/**
+ * Run updates are read-modify-write on one run.json while renders of other
+ * variants finish in parallel; one queue per run keeps them from overwriting
+ * each other. The long Bridge call happens outside the queue.
+ */
+const runQueues = new Map<string, Promise<unknown>>();
+
+function withRunLock<T>(runId: string, task: () => Promise<T>): Promise<T> {
+  const previous = runQueues.get(runId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(task);
+  runQueues.set(runId, next);
+  void next.catch(() => undefined).finally(() => {
+    if (runQueues.get(runId) === next) runQueues.delete(runId);
+  });
+  return next;
+}
+
+async function readRunOrFail(runId: string, dir?: string) {
+  const run = await store.readRun(runId, { dir });
+  if (!run) throw new ThumbnailRunError(`Unknown thumbnail run ${runId}.`, 404);
+  return run;
+}
+
+function variantOrFail(run: ThumbnailRun, variantId: string) {
+  const variant = run.variants.find((candidate) => candidate.id === variantId);
+  if (!variant) throw new ThumbnailRunError(`Unknown variant ${variantId}.`, 404);
+  return variant;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "The render failed.";
 }
 
 /**
  * One Thumbnail-Builder run: plan three variants against the reference
- * thumbnails, render them in parallel with Chris' stills, crop to 16:9 and
- * store the run. A failed render keeps its plan so it can be rendered again.
+ * thumbnails, render the background layer of all three in parallel, crop to
+ * 16:9 and store the run. Person and text follow per variant once Chris
+ * approved the layer before. A failed render keeps its plan so it can be
+ * rendered again.
  */
 export async function runThumbnailBuilder(body: unknown, deps: ThumbnailRunDeps = {}): Promise<ThumbnailRun> {
   const request = parseThumbnailRequest(body);
@@ -164,7 +218,13 @@ export async function runThumbnailBuilder(body: unknown, deps: ThumbnailRunDeps 
   }
   const faces = await requireFaces(deps.faces ?? (() => loadFaceReferences()));
   const ready = await bridgeReferences(references, deps.cacheReference ?? ((reference) => store.cacheReferenceImage(reference, { dir })));
-  const input: BridgeInput = { video: { title: request.title, ...(request.brief ? { brief: request.brief } : {}) }, references: ready, faces };
+  const rules = await (deps.rules ?? (() => loadThumbnailRules()))();
+  const input: BridgeInput = {
+    video: { title: request.title, ...(request.brief ? { brief: request.brief } : {}) },
+    references: ready,
+    faces,
+    ...(rules ? { rules: rules.text } : {}),
+  };
 
   let plan: ThumbnailPlanVariant[];
   try {
@@ -184,8 +244,18 @@ export async function runThumbnailBuilder(body: unknown, deps: ThumbnailRunDeps 
     face: variant.face,
     inspiredBy: inspirationFor(variant.inspiredBy, references),
     imagePrompt: variant.imagePrompt,
+    layers: {},
   }));
-  const variants = await Promise.all(planned.map((variant) => renderVariant(runId, variant, input, bridge, now, dir)));
+  const variants = await Promise.all(planned.map(async (variant): Promise<ThumbnailVariant> => {
+    let background: ThumbnailLayer;
+    try {
+      const payload = await bridge("render", { ...input, variant: planForBridge(variant), stage: "background" });
+      background = await persistLayer(runId, variant.id, "background", fitRender(payload), now().toISOString(), dir);
+    } catch (error) {
+      background = { renderedAt: now().toISOString(), error: errorMessage(error) };
+    }
+    return { ...variant, layers: { background } };
+  }));
   const run: ThumbnailRun = {
     id: runId,
     title: request.title,
@@ -194,6 +264,7 @@ export async function runThumbnailBuilder(body: unknown, deps: ThumbnailRunDeps 
     createdAt: started.toISOString(),
     referenceIds: ready.map((reference) => reference.id),
     faceCount: faces.length,
+    ...(rules ? { rulesSource: rules.source } : {}),
     variants,
   };
   if (variants.length !== THUMBNAIL_VARIANT_COUNT) throw new ThumbnailRunError("The run lost a variant.", 500);
@@ -201,14 +272,32 @@ export async function runThumbnailBuilder(body: unknown, deps: ThumbnailRunDeps 
   return run;
 }
 
-/** Renders one stored variant again from its plan, with the current stills. */
-export async function rerenderThumbnailVariant(body: unknown, deps: ThumbnailRunDeps = {}): Promise<ThumbnailRun> {
-  const { runId, variantId } = parseRenderRequest(body);
+/**
+ * Renders one layer of a stored variant from its plan: { runId, variantId, stage }.
+ * Person needs an approved background, text an approved person layer; the
+ * approved layer goes to the Bridge as the base image. A successful render
+ * replaces the layer, drops every later layer with its file and clears the
+ * choice if it pointed at this variant. A failed render changes nothing that
+ * was rendered before; a stage without an image keeps the error.
+ */
+export async function renderThumbnailStage(body: unknown, deps: ThumbnailRunDeps = {}): Promise<ThumbnailRun> {
+  let target: { runId: string; variantId: string; stage: ThumbnailStage };
+  try {
+    target = parseStageRequest(body);
+  } catch (error) {
+    throw new ThumbnailRunError(error instanceof Error ? error.message : String(error), 400);
+  }
+  const { runId, variantId, stage } = target;
   const dir = deps.dir;
-  const run = await store.readRun(runId, { dir });
-  if (!run) throw new ThumbnailRunError(`Unknown thumbnail run ${runId}.`, 404);
-  const variant = run.variants.find((candidate) => candidate.id === variantId);
-  if (!variant) throw new ThumbnailRunError(`Unknown variant ${variantId}.`, 404);
+  const run = await readRunOrFail(runId, dir);
+  const variant = variantOrFail(run, variantId);
+  const blocker = stageBlocker(variant, stage);
+  if (blocker) throw new ThumbnailRunError(blocker, 409);
+  const previous = previousStage(stage);
+  const baseLayer = previous ? variant.layers?.[previous] : undefined;
+  const base = previous ? await store.variantImageFile(runId, variantId, { dir, stage: previous }) : null;
+  if (previous && !base) throw new ThumbnailRunError(`The approved ${previous} image is missing. Render ${previous} again.`, 409);
+
   const faces = await requireFaces(deps.faces ?? (() => loadFaceReferences()));
   if (!faces.some((face) => face.id === variant.face)) {
     throw new ThumbnailRunError("The still this variant was planned with is no longer configured.", 409);
@@ -231,11 +320,84 @@ export async function rerenderThumbnailVariant(body: unknown, deps: ThumbnailRun
   const ready = await bridgeReferences(references, deps.cacheReference ?? ((reference) => store.cacheReferenceImage(reference, { dir })));
   const input: BridgeInput = { video: { title: run.title }, references: ready, faces };
   const now = deps.now ?? (() => new Date());
-  const rendered = await renderVariant(run.id, variant, input, deps.bridge ?? callBridge, now, dir);
-  if (rendered.error) throw new ThumbnailRunError(rendered.error, 502);
-  const next = { ...run, variants: run.variants.map((candidate) => (candidate.id === variantId ? rendered : candidate)) };
-  await store.saveRun(next, { dir });
-  return next;
+  const bridge = deps.bridge ?? callBridge;
+
+  let fitted: ReturnType<typeof fitRender> | null = null;
+  let failure = "";
+  try {
+    fitted = fitRender(await bridge("render", { ...input, variant: planForBridge(variant), stage, ...(base ? { base } : {}) }));
+  } catch (error) {
+    failure = errorMessage(error);
+  }
+
+  return withRunLock(runId, async () => {
+    const current = await readRunOrFail(runId, dir);
+    const fresh = variantOrFail(current, variantId);
+    // The base changed while this render ran (it was rendered again); this result belongs to an old base.
+    if (previous && fresh.layers?.[previous]?.renderedAt !== baseLayer?.renderedAt) {
+      throw new ThumbnailRunError(`The ${previous} layer changed while ${stage} was rendering. Render ${stage} again.`, 409);
+    }
+    const layers = { ...fresh.layers };
+    if (!fitted) {
+      if (hasLayerImage(layers[stage])) throw new ThumbnailRunError(failure, 502);
+      layers[stage] = { renderedAt: now().toISOString(), error: failure };
+      await store.saveRun(replaceVariant(current, { ...fresh, layers }), { dir });
+      throw new ThumbnailRunError(failure, 502);
+    }
+    layers[stage] = await persistLayer(runId, variantId, stage, fitted, now().toISOString(), dir);
+    for (const later of laterStages(stage)) {
+      delete layers[later];
+      await store.removeVariantImage(runId, variantId, later, { dir });
+    }
+    const next = replaceVariant(current, { ...fresh, layers });
+    if (next.chosenVariantId === variantId) delete next.chosenVariantId;
+    await store.saveRun(next, { dir });
+    return next;
+  });
+}
+
+function replaceVariant(run: ThumbnailRun, variant: ThumbnailVariant): ThumbnailRun {
+  return { ...run, variants: run.variants.map((candidate) => (candidate.id === variant.id ? variant : candidate)) };
+}
+
+/** Chris approves one rendered layer: { runId, variantId, stage }. */
+export async function approveThumbnailStage(body: unknown, deps: Pick<ThumbnailRunDeps, "dir" | "now"> = {}): Promise<ThumbnailRun> {
+  let target: { runId: string; variantId: string; stage: ThumbnailStage };
+  try {
+    target = parseStageRequest(body);
+  } catch (error) {
+    throw new ThumbnailRunError(error instanceof Error ? error.message : String(error), 400);
+  }
+  const { runId, variantId, stage } = target;
+  const now = deps.now ?? (() => new Date());
+  return withRunLock(runId, async () => {
+    const run = await readRunOrFail(runId, deps.dir);
+    const variant = variantOrFail(run, variantId);
+    if (isLegacyVariant(variant)) throw new ThumbnailRunError("This variant comes from a run before the layer flow and is read-only.", 409);
+    const layer = variant.layers?.[stage];
+    if (!hasLayerImage(layer)) throw new ThumbnailRunError(`The ${stage} layer has no rendered image to approve.`, 409);
+    const next = replaceVariant(run, { ...variant, layers: { ...variant.layers, [stage]: { ...layer, approvedAt: now().toISOString() } } });
+    await store.saveRun(next, { dir: deps.dir });
+    return next;
+  });
+}
+
+/** Chris picks the variant he will use: { runId, variantId }. */
+export async function chooseThumbnailVariant(body: unknown, deps: Pick<ThumbnailRunDeps, "dir"> = {}): Promise<ThumbnailRun> {
+  let target: { runId: string; variantId: string };
+  try {
+    target = parseVariantRequest(body);
+  } catch (error) {
+    throw new ThumbnailRunError(error instanceof Error ? error.message : String(error), 400);
+  }
+  return withRunLock(target.runId, async () => {
+    const run = await readRunOrFail(target.runId, deps.dir);
+    const variant = variantOrFail(run, target.variantId);
+    if (!finishedImage(variant)) throw new ThumbnailRunError("Only a variant with an approved text layer can be chosen.", 409);
+    const next = { ...run, chosenVariantId: variant.id };
+    await store.saveRun(next, { dir: deps.dir });
+    return next;
+  });
 }
 
 type OutlierStorage = Pick<StorageAdapter, "listYoutubeOutliers">;
@@ -256,19 +418,52 @@ export async function thumbnailLibraryView(storage: OutlierStorage, options: { m
 }
 
 /** Marks one Outlier thumbnail; every stored field comes from the Outlier row, not from the browser. */
-export async function markThumbnailReference(body: unknown, storage: OutlierStorage, options: { now?: Date; dir?: string; fetch?: typeof fetch } = {}) {
+type VideoLookup = (videoId: string) => Promise<Parameters<typeof manualReference>[0] | null>;
+
+/** One videos.list call (1 quota unit) for a link Chris pasted. */
+async function lookupVideo(videoId: string) {
+  const [video] = await fetchVideos([videoId], createYoutubeClient());
+  return video ?? null;
+}
+
+async function manualReferenceFor(videoId: string, now: Date, note: string | undefined, lookup: VideoLookup = lookupVideo) {
+  let video;
+  try {
+    video = await lookup(videoId);
+  } catch (error) {
+    if (error instanceof YoutubeKeyMissingError) throw new ThumbnailRunError("YOUTUBE_API_KEY is not set; links cannot be looked up.", 409);
+    throw new ThumbnailRunError(error instanceof Error ? error.message : "The YouTube lookup failed.", 502);
+  }
+  if (!video) throw new ThumbnailRunError(`YouTube knows no public video ${videoId}.`, 404);
+  try {
+    return manualReference(video, now.toISOString(), note);
+  } catch (error) {
+    throw new ThumbnailRunError(error instanceof Error ? error.message : String(error), 422);
+  }
+}
+
+export async function markThumbnailReference(
+  body: unknown,
+  storage: OutlierStorage,
+  options: { now?: Date; dir?: string; fetch?: typeof fetch; lookup?: VideoLookup } = {},
+) {
   const now = options.now ?? new Date();
   const dir = options.dir;
-  let mark: { videoId: string; market?: "de" | "en" };
+  let mark: ReturnType<typeof parseReferenceMark>;
   try {
     mark = parseReferenceMark(body);
   } catch (error) {
     throw new ThumbnailRunError(error instanceof Error ? error.message : String(error), 400);
   }
-  const outliers = await storage.listYoutubeOutliers({ minFactor: REFERENCE_MIN_FACTOR, limit: 200, ...(mark.market ? { market: mark.market } : {}) });
-  const video: YoutubeVideo | undefined = outliers.find((candidate) => candidate.videoId === mark.videoId);
-  if (!video) throw new ThumbnailRunError(`${mark.videoId} is not an Outlier from ${REFERENCE_MIN_FACTOR}x.`, 404);
-  const reference = referenceFromOutlier(video, now.toISOString());
+  let reference: ThumbnailReference;
+  if (mark.manual) {
+    reference = await manualReferenceFor(mark.videoId, now, mark.note, options.lookup);
+  } else {
+    const outliers = await storage.listYoutubeOutliers({ minFactor: REFERENCE_MIN_FACTOR, limit: 200, ...(mark.market ? { market: mark.market } : {}) });
+    const video: YoutubeVideo | undefined = outliers.find((candidate) => candidate.videoId === mark.videoId);
+    if (!video) throw new ThumbnailRunError(`${mark.videoId} is not an Outlier from ${REFERENCE_MIN_FACTOR}x.`, 404);
+    reference = referenceFromOutlier(video, now.toISOString(), mark.note);
+  }
   let library;
   try {
     library = addReference(await store.readLibrary({ dir }), reference);
