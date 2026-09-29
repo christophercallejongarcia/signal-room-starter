@@ -1,6 +1,6 @@
 import http from "node:http";
 import { Codex } from "@openai/codex-sdk";
-import { codexAuthState } from "./auth.mjs";
+import { codexAuthState, codexPathOverride } from "./auth.mjs";
 import { renderCoverWithCodex } from "./image.mjs";
 import { COVER_FORMATS } from "../lib/cover-formats.mjs";
 import {
@@ -102,7 +102,7 @@ async function readJson(request) {
 }
 
 function createCodex() {
-  return new Codex();
+  return new Codex(codexPathOverride());
 }
 
 /** One Codex turn under the read-only sandbox. The routes differ only in prompt (text or text plus images) and schema. */

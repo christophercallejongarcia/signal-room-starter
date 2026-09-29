@@ -221,3 +221,11 @@ test("the text stage sees only the approved person layer and adds exactly the ov
   assert.equal(render.text.includes(PERSON_LOOK.face), false);
   assert.ok(json.avoid.includes("any words other than text.content"));
 });
+
+test("CODEX_PATH switches the Bridge to an installed Codex CLI only when it exists", async () => {
+  const { codexPathOverride } = await import("../bridge/auth.mjs");
+  assert.deepEqual(codexPathOverride({}), {});
+  assert.deepEqual(codexPathOverride({ CODEX_PATH: "relative/codex" }), {});
+  assert.deepEqual(codexPathOverride({ CODEX_PATH: "/does/not/exist/codex" }), {});
+  assert.deepEqual(codexPathOverride({ CODEX_PATH: process.execPath }), { codexPathOverride: process.execPath });
+});

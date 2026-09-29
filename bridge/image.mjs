@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Codex } from "@openai/codex-sdk";
-import { codexAuthState } from "./auth.mjs";
+import { codexAuthState, codexPathOverride } from "./auth.mjs";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_TIMEOUT_MS = 240_000;
@@ -47,7 +47,7 @@ export async function renderCoverWithCodex(prompt, images = []) {
   const timeout = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
 
   try {
-    const codex = new Codex({ config: { features: { image_generation: true } } });
+    const codex = new Codex({ ...codexPathOverride(), config: { features: { image_generation: true } } });
     const thread = codex.startThread({
       model: process.env.CODEX_IMAGE_MODEL || process.env.CODEX_MODEL || undefined,
       workingDirectory: WORKSPACE,
