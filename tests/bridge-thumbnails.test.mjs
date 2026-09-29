@@ -143,6 +143,11 @@ test("the formula plan picks backdrop, one object and text from enums, and the s
   assert.ok(background.avoid.includes("more than one object"));
   assert.equal(background.keyVisual, undefined, "no free-text scene reaches the image model");
 
+  const person = buildThumbnailImageInput({ ...request(), base: "/runs/background.png" }, planned, "person").prompt;
+  assert.match(person.task, /photographed anew/);
+  assert.match(person.identity, /never cut out or paste a reference photo/);
+  assert.match(person.portrait.wardrobe, /charcoal hoodie/, "cream backdrop defaults to a charcoal hoodie");
+  assert.ok(person.avoid.includes("a cut-out or pasted look"));
   const text = buildThumbnailImageInput({ ...request(), base: "/runs/person.png" }, planned, "text").prompt;
   assert.match(text.text.typeface, /condensed sans serif/);
   assert.throws(() => normalizeThumbnailPlan({ variants: [formulaVariant({ imagePrompt: { ...formulaVariant().imagePrompt, backdrop: "forest" } }), formulaVariant(), formulaVariant()] }, request()), /backdrop is invalid/);
@@ -202,7 +207,8 @@ test("the person stage puts the approved background first, then the stills, and 
   assert.deepEqual(json.look, PERSON_LOOK);
   assert.match(json.look.skin, /never pale or grey/);
   assert.match(json.look.face, /3 to 5 percent narrower/);
-  assert.match(json.look.identity, /clearly recognizable/);
+  assert.match(json.look.identity, /instantly recognizable/);
+  assert.match(json.look.retouch, /magazine-cover retouch/);
   for (const item of ["pale or grey skin", "flat lighting", "wide-angle distortion of the face"]) assert.ok(json.avoid.includes(item), item);
   assert.match(json.rule, /No text/);
   assert.equal(render.text.includes("Größer denken"), false);
@@ -253,4 +259,15 @@ test("the person stage sends at most five images: the background and four face p
   const [planned] = normalizeThumbnailPlan({ variants: [variant({ face: "foto-3" }), variant({ face: "foto-3" }), variant({ face: "foto-3" })] }, wide);
   const render = buildThumbnailImageInput({ ...wide, base: "/runs/background.png" }, planned, "person");
   assert.deepEqual(render.images, ["/runs/background.png", "/stills/foto-3.jpg", "/stills/foto-1.jpg", "/stills/foto-2.jpg", "/stills/foto-4.jpg"]);
+});
+
+test("only the formula person stage asks for the retouch pass", async () => {
+  const { PERSON_REFINE } = await import("../bridge/thumbnails.mjs");
+  assert.match(JSON.parse(PERSON_REFINE).task, /Retouch ONLY Chris/);
+  const formula = normalizeThumbnailPlan({ variants: [formulaVariant(), formulaVariant(), formulaVariant()] }, request())[0];
+  const legacy = normalizeThumbnailPlan({ variants: [variant(), variant(), variant()] }, request())[0];
+  const withBase = { ...request(), base: "/runs/layer.png" };
+  assert.equal(buildThumbnailImageInput(withBase, formula, "person").refine, PERSON_REFINE);
+  assert.equal(buildThumbnailImageInput(withBase, legacy, "person").refine, undefined);
+  assert.equal(buildThumbnailImageInput(withBase, formula, "text").refine, undefined);
 });

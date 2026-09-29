@@ -58,6 +58,8 @@ export type ThumbnailElements = {
   object: { kind: "terminal-window" | "browser-window" | "icon-tiles" | "logo-equation" | "device" | "chart-card"; description: string };
   textStyle: "condensed-caps" | "serif";
   textPlacement: "beside" | "behind-person" | "bottom";
+  wardrobe?: "hoodie-cream" | "hoodie-charcoal" | "hoodie-rust" | "tee-black" | "overshirt-dark";
+  gesture?: "none" | "hands-clasped" | "pointing" | "holding-phone";
 };
 
 const ELEMENT_CHOICES = {
@@ -66,6 +68,8 @@ const ELEMENT_CHOICES = {
   objectKind: ["terminal-window", "browser-window", "icon-tiles", "logo-equation", "device", "chart-card"],
   textStyle: ["condensed-caps", "serif"],
   textPlacement: ["beside", "behind-person", "bottom"],
+  wardrobe: ["hoodie-cream", "hoodie-charcoal", "hoodie-rust", "tee-black", "overshirt-dark"],
+  gesture: ["none", "hands-clasped", "pointing", "holding-phone"],
 } as const;
 
 function oneOf<T extends string>(value: unknown, choices: readonly T[], where: string, field: string): T {
@@ -84,6 +88,8 @@ function elementsFrom(value: unknown, where: string): ThumbnailElements | undefi
     object: { kind: oneOf(value.object.kind, ELEMENT_CHOICES.objectKind, where, "object.kind"), description },
     textStyle: oneOf(value.textStyle, ELEMENT_CHOICES.textStyle, where, "textStyle"),
     textPlacement: oneOf(value.textPlacement, ELEMENT_CHOICES.textPlacement, where, "textPlacement"),
+    ...(value.wardrobe !== undefined ? { wardrobe: oneOf(value.wardrobe, ELEMENT_CHOICES.wardrobe, where, "wardrobe") } : {}),
+    ...(value.gesture !== undefined ? { gesture: oneOf(value.gesture, ELEMENT_CHOICES.gesture, where, "gesture") } : {}),
   };
 }
 

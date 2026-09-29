@@ -295,7 +295,7 @@ const routes = new Map([
         const variant = normalizeThumbnailVariant(input.variant, request, 0);
         const render = buildThumbnailImageInput(request, variant, stage);
         await assertImageFiles(render.images);
-        return { image: await renderCoverWithCodex(render.text, render.images) };
+        return { image: await renderCoverWithCodex(render.text, render.images, render.refine ? { refine: render.refine } : {}) };
       },
     },
   ],

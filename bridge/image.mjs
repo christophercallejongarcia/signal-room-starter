@@ -59,7 +59,7 @@ export async function newestGeneratedImage(directory) {
  * in the Codex home. `images` are validated local files (face photos,
  * reference thumbnails, approved layers) the image model receives, in order.
  */
-export async function renderCoverWithCodex(prompt, allImages = []) {
+export async function renderCoverWithCodex(prompt, allImages = [], { refine } = {}) {
   // Codex's image_gen tool refuses more than five input images; callers order them by importance.
   const images = allImages.slice(0, 5);
   if (codexAuthState() === "logged-out") {
@@ -84,7 +84,9 @@ export async function renderCoverWithCodex(prompt, allImages = []) {
     });
     const instruction = [
       prompt,
-      "Call the built-in image_gen tool exactly once with the attached images as input and the highest quality it offers.",
+      refine
+        ? "Call the built-in image_gen tool with the attached images as input and the highest quality it offers. Then call it exactly once more on that result (include only the last generated image) with this refinement prompt, verbatim:\n" + refine
+        : "Call the built-in image_gen tool exactly once with the attached images as input and the highest quality it offers.",
       "Do not run shell commands, do not read, search, copy or write files. Codex keeps the image itself.",
       'When the image is generated, return {"generated":true}.',
     ].join("\n");
