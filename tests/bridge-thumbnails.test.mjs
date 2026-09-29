@@ -229,3 +229,28 @@ test("CODEX_PATH switches the Bridge to an installed Codex CLI only when it exis
   assert.deepEqual(codexPathOverride({ CODEX_PATH: "/does/not/exist/codex" }), {});
   assert.deepEqual(codexPathOverride({ CODEX_PATH: process.execPath }), { codexPathOverride: process.execPath });
 });
+
+test("a render reads its image only from its own Codex thread folder", async () => {
+  const { generatedImagesDir, newestGeneratedImage } = await import("../bridge/image.mjs");
+  assert.equal(generatedImagesDir("../../etc", { CODEX_HOME: "/codex" }), null);
+  assert.equal(generatedImagesDir("01a0eea6-08d4-7742-869e-545210c7093c", { CODEX_HOME: "/codex" }), "/codex/generated_images/01a0eea6-08d4-7742-869e-545210c7093c");
+  const dir = await mkdtemp(path.join(tmpdir(), "codex-images-"));
+  try {
+    assert.equal(await newestGeneratedImage(path.join(dir, "missing")), null);
+    await writeFile(path.join(dir, "notes.txt"), "x");
+    await writeFile(path.join(dir, "a.png"), "old");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeFile(path.join(dir, "b.png"), "new");
+    assert.equal(await newestGeneratedImage(dir), path.join(dir, "b.png"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the person stage sends at most five images: the background and four face photos", () => {
+  const six = Array.from({ length: 6 }, (_, index) => ({ id: `foto-${index + 1}`, path: `/stills/foto-${index + 1}.jpg` }));
+  const wide = validateThumbnailRequest({ video: { title: "T" }, references, faces: six });
+  const [planned] = normalizeThumbnailPlan({ variants: [variant({ face: "foto-3" }), variant({ face: "foto-3" }), variant({ face: "foto-3" })] }, wide);
+  const render = buildThumbnailImageInput({ ...wide, base: "/runs/background.png" }, planned, "person");
+  assert.deepEqual(render.images, ["/runs/background.png", "/stills/foto-3.jpg", "/stills/foto-1.jpg", "/stills/foto-2.jpg", "/stills/foto-4.jpg"]);
+});

@@ -139,7 +139,7 @@ export const THUMBNAIL_BACKDROPS = {
 export const THUMBNAIL_OBJECTS = {
   "terminal-window": "one clean terminal or app window card with a title bar and one short command in large monospace",
   "browser-window": "one clean browser window card showing one simple, readable result screen",
-  "icon-tiles": "a single tidy row or arc of three to six rounded icon tiles in the same style",
+  "icon-tiles": "a single tidy row, arc or staircase of three to six rounded icon tiles in the same style, each tile large (about 15 percent of the frame height) with a bold, simple glyph",
   "logo-equation": "two to three rounded logo or symbol tiles joined by + or an arrow",
   "device": "one phone or laptop showing one simple, readable screen",
   "chart-card": "one clean card with a single rising line or a ladder of levels",
@@ -354,6 +354,8 @@ export function orderedFaces(faces, chosen) {
 }
 
 export const THUMBNAIL_STAGES = ["background", "person", "text"];
+/** Codex's image_gen tool accepts at most five input images per call. */
+export const IMAGE_INPUT_MAX = 5;
 
 /** Stage and, for person and text, the approved previous layer the app sends as `base`. */
 export function validateThumbnailStage(input) {
@@ -454,7 +456,7 @@ function backgroundPrompt(request, variant) {
       finish: "Clean, bright, minimal, high contrast between object and backdrop, readable at 160 px wide.",
       avoid: [...BASE_AVOID, ...FORMULA_AVOID, ...STAGE_AVOID.background, ...variant.imagePrompt.avoid],
     };
-    return { json, images: styles.map((style) => style.path) };
+    return { json, images: styles.map((style) => style.path).slice(0, IMAGE_INPUT_MAX) };
   }
   const json = {
     task: "Background layer of a YouTube thumbnail for Chris' German video",
@@ -479,10 +481,13 @@ function backgroundPrompt(request, variant) {
 
 function personPrompt(request, variant) {
   const base = requireBase(request, "person");
-  const faces = orderedFaces(request.faces, variant.face);
+  // Image 1 is the background, so four face photos fit: the chosen expression first.
+  const faces = orderedFaces(request.faces, variant.face).slice(0, IMAGE_INPUT_MAX - 1);
   const faceRange = faces.length === 1 ? "Image 2" : `Images 2-${faces.length + 1}`;
   const json = {
-    task: "Place Chris into the approved background of a YouTube thumbnail",
+    task: "Edit: a YouTube thumbnail. Add ONLY Chris, the man in the face photos, to the approved background (image 1).",
+    preserve: "Keep the backdrop colour, the object, its position, size, shading and every other detail of image 1 unchanged. Do not change any other aspect of the image.",
+    identity: "Preserve his exact likeness: face, facial features, eyes, nose, hairstyle, beard and proportions from the face photos. The only allowed changes are the look notes below: warmer skin, more contrast, a very slightly slimmer face as with a portrait lens.",
     video: request.video.title,
     canvas: canvasBlock("his face and the key visual"),
     inputImages: {
@@ -509,7 +514,8 @@ function personPrompt(request, variant) {
 function textPrompt(request, variant) {
   const base = requireBase(request, "text");
   const json = {
-    task: "Add the headline to the approved YouTube thumbnail",
+    task: "Edit: a YouTube thumbnail. Add ONLY the headline to the approved image (image 1).",
+    preserve: "Do not change Chris, his face, expression, skin, the backdrop, the object or the framing. Do not change any other aspect of the image.",
     video: request.video.title,
     canvas: canvasBlock("the words, Chris' face and the key visual"),
     inputImages: {
@@ -517,7 +523,7 @@ function textPrompt(request, variant) {
     },
     text: {
       content: variant.textOverlay,
-      rule: "Add exactly these words, spelled exactly as given including umlauts. No other text anywhere.",
+      rule: "Include ONLY this headline text (verbatim), rendered exactly once, clearly and legibly, spelled exactly as given including umlauts. No extra text, no watermarks, no unrelated logos.",
       placement: variant.imagePrompt.text.placement,
       style: variant.imagePrompt.text.style,
       ...(variant.imagePrompt.elements
