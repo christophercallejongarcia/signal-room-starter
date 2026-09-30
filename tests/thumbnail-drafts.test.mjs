@@ -173,6 +173,7 @@ test("twenty drafts plan in four chunks and use every recipe, Chris' idea twice"
   assert.deepEqual([...new Set(used)].sort(), Object.keys(THUMBNAIL_RECIPES).sort());
   assert.ok(used.filter((id) => id === "abo-comparison").length >= 2);
   assert.deepEqual(draftChunks(3), [["abo-comparison", "icon-halo", "logo-equation"]]);
+  assert.deepEqual(draftChunks(3, ["tier-cards", "ui-toggle"]), [["tier-cards", "ui-toggle", "tier-cards"]], "picked formats fill the slots");
 });
 
 test("variant ids go up to 20 for draft runs and stay path-safe", async () => {

@@ -27,7 +27,7 @@ const MAX_TEXT = 60;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const VARIANT_COUNT = 3;
 /** Mirrors THUMBNAIL_DRAFT_MIN / _MAX / _DEFAULT in lib/thumbnail-builder.ts. */
-const DRAFT_MIN = 3;
+const DRAFT_MIN = 2;
 const DRAFT_MAX = 20;
 const DRAFT_DEFAULT = 15;
 const ID = /^[A-Za-z0-9_-]{1,80}$/;
@@ -496,7 +496,11 @@ export const PERSON_REFINE = JSON.stringify({
   finish: "A polished, crisp creator thumbnail portrait, like a magazine cover shot.",
 });
 
-const BASE_AVOID = ["letterbox bars, borders or frames", "watermarks, channel logos, tiny unreadable text"];
+const BASE_AVOID = [
+  "letterbox bars, borders or frames",
+  "watermarks, channel logos, tiny unreadable text",
+  "logos of other AI products (OpenAI, ChatGPT, Gemini, Copilot); the Claude spark is the only brand mark",
+];
 /** What the formula forbids in every stage: the clutter of the first runs. */
 const FORMULA_AVOID = ["a scene, room, landscape or floor", "particles, light streaks, glow lines, sparkles", "extra icons, badges, arrows or decorations", "more than one object"];
 const STAGE_AVOID = {

@@ -68,8 +68,9 @@ export const DRAFT_RECIPE_ORDER = [
 const DRAFT_CHUNK = 5;
 
 /** Slots for count drafts, cycling through the recipes, cut into planning chunks of five. */
-export function draftChunks(count: number) {
-  const slots = Array.from({ length: count }, (_, index) => DRAFT_RECIPE_ORDER[index % DRAFT_RECIPE_ORDER.length]);
+export function draftChunks(count: number, recipes: readonly string[] = DRAFT_RECIPE_ORDER) {
+  const order = recipes.length > 0 ? recipes : DRAFT_RECIPE_ORDER;
+  const slots = Array.from({ length: count }, (_, index) => order[index % order.length]);
   const chunks: string[][] = [];
   for (let start = 0; start < slots.length; start += DRAFT_CHUNK) chunks.push(slots.slice(start, start + DRAFT_CHUNK));
   return chunks;
@@ -89,6 +90,9 @@ export async function runThumbnailDrafts(body: unknown, deps: DraftDeps = {}): P
     throw new ThumbnailRunError(errorMessage(error), 400);
   }
   const count = draftCount((body as { count?: unknown } | null)?.count);
+  // Optional: the recipes to fill the slots with, e.g. the formats picked for one title.
+  const requested = (body as { recipes?: unknown } | null)?.recipes;
+  const recipes = Array.isArray(requested) ? requested.filter((id): id is string => typeof id === "string" && DRAFT_RECIPE_ORDER.includes(id)) : [];
   const now = deps.now ?? (() => new Date());
   const bridge = deps.bridge ?? callBridge;
   const dir = deps.dir;
@@ -114,7 +118,7 @@ export async function runThumbnailDrafts(body: unknown, deps: DraftDeps = {}): P
   // One planning call for 20 variants outlasts the Bridge's window; chunks of five plan in parallel, each with its own recipes.
   let plan: ThumbnailPlanVariant[];
   try {
-    const chunks = draftChunks(count);
+    const chunks = draftChunks(count, recipes);
     const plans = await Promise.all(chunks.map(async (recipes) => parseThumbnailPlan(
       await bridge("plan", { ...input, drafts: true, count: recipes.length, recipes: [...new Set(recipes)] }),
       { referenceIds: ready.map((reference) => reference.id), faces: faces.map((face) => face.id), count: recipes.length },

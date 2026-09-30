@@ -45,7 +45,7 @@ export function isThumbnailImageKind(value: unknown): value is ThumbnailImageKin
 }
 
 /** A draft run plans many variants at once; each renders in one image and gets an automatic check. */
-export const THUMBNAIL_DRAFT_MIN = 3;
+export const THUMBNAIL_DRAFT_MIN = 2;
 export const THUMBNAIL_DRAFT_MAX = 20;
 export const THUMBNAIL_DRAFT_DEFAULT = 15;
 
