@@ -87,7 +87,7 @@ test("the plan schema limits faces and Outliers to the offered ids", () => {
 test("the planner sees the reference thumbnails as images, never the stills", () => {
   const input = buildThumbnailPlanInput(request());
   assert.equal(input[0].type, "text");
-  assert.match(input[0].text, /exactly three distinct 16:9/);
+  assert.match(input[0].text, /exactly 3 distinct 16:9/);
   assert.match(input[0].text, /label, concept and every borrowed note are German/);
   assert.match(input[0].text, /"videoId": "AAAAAAAAAA1"/);
   assert.deepEqual(input.slice(1), references.map((reference) => ({ type: "local_image", path: reference.path })));
@@ -128,7 +128,7 @@ function formulaVariant(extra = {}) {
 
 test("the formula plan picks backdrop, one object and text from enums, and the stages render only those", () => {
   const schema = thumbnailPlanOutputSchema(request()).properties.variants.items.properties.imagePrompt;
-  assert.deepEqual(schema.properties.backdrop.enum, ["cream", "coral", "charcoal", "navy"]);
+  assert.deepEqual(schema.properties.backdrop.enum, ["cream", "coral", "charcoal", "navy", "black", "royal-blue", "light-grey", "graph-paper", "split"]);
   assert.ok(schema.required.includes("object") && !schema.required.includes("keyVisual"));
   assert.match(buildThumbnailPlanInput(request())[0].text, /Exactly three visible elements/);
 
@@ -270,4 +270,34 @@ test("only the formula person stage asks for the retouch pass", async () => {
   assert.equal(buildThumbnailImageInput(withBase, formula, "person").refine, PERSON_REFINE);
   assert.equal(buildThumbnailImageInput(withBase, legacy, "person").refine, undefined);
   assert.equal(buildThumbnailImageInput(withBase, formula, "text").refine, undefined);
+});
+
+test("a draft run asks for many variants with a recipe each and renders one finished image", async () => {
+  const { THUMBNAIL_RECIPES, validateCheckRequest, buildCheckInput, checkOutputSchema } = await import("../bridge/thumbnails.mjs");
+  const drafts = validateThumbnailRequest({ video: { title: "T" }, references, faces, drafts: true, count: 25 });
+  assert.equal(drafts.count, 20, "at most 20 drafts");
+  assert.equal(validateThumbnailRequest({ video: { title: "T" }, references, faces, drafts: true }).count, 15);
+  const schema = thumbnailPlanOutputSchema(drafts).properties.variants.items;
+  assert.ok(schema.required.includes("recipe"));
+  assert.deepEqual(schema.properties.recipe.enum, Object.keys(THUMBNAIL_RECIPES));
+  assert.match(buildThumbnailPlanInput(drafts)[0].text, /abo-comparison at least twice/);
+  const withRecipe = (recipe, layout) => ({ ...formulaVariant(), recipe, imagePrompt: { ...formulaVariant().imagePrompt, layout } });
+  const [person] = normalizeThumbnailPlan({ variants: Array.from({ length: 20 }, () => withRecipe("abo-comparison", "person-right")) }, drafts);
+  assert.equal(person.recipe, "abo-comparison");
+  assert.throws(() => normalizeThumbnailPlan({ variants: Array.from({ length: 20 }, () => withRecipe("unknown", "person-right")) }, drafts), /no known recipe/);
+  const render = buildThumbnailImageInput(request(), person, "draft");
+  assert.match(render.prompt.recipe.spec, /20 euro subscription/);
+  assert.equal(render.images.length, 3, "two face photos plus the inspiring thumbnail");
+  assert.ok(render.refine);
+  const [faceless] = normalizeThumbnailPlan({ variants: Array.from({ length: 20 }, () => withRecipe("logo-equation", "no-person")) }, drafts);
+  const facelessRender = buildThumbnailImageInput(request(), faceless, "draft");
+  assert.equal(facelessRender.prompt.person, "No person, no face, no hands.");
+  assert.ok(facelessRender.images.every((file) => !file.startsWith("/stills/")));
+  assert.equal(facelessRender.refine, undefined);
+
+  const check = validateCheckRequest({ image: "/runs/draft.png", faces, textOverlay: "Lass arbeiten", withPerson: true });
+  const input = buildCheckInput(check);
+  assert.match(input[0].text, /headline must read exactly: "Lass arbeiten"/);
+  assert.deepEqual(input.slice(1).map((item) => item.path), ["/runs/draft.png", ...faces.map((face) => face.path)]);
+  assert.ok(checkOutputSchema.required.includes("cornerFree"));
 });

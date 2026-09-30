@@ -1061,6 +1061,26 @@ main {
 .thumb-ref strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-weight: 600; }
 .thumb-ref small { color: var(--muted); font-size: 10px; }
 .thumb-ref .ghost-button { justify-self: start; display: inline-flex; align-items: center; gap: 5px; }
+.thumb-foot-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.thumb-drafts { display: grid; gap: 12px; min-width: 0; }
+.thumb-drafts-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0; color: var(--muted); font-size: 11.5px; }
+.thumb-drafts-summary strong { color: var(--ink); }
+.thumb-draft-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.thumb-draft { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); overflow: hidden; }
+.thumb-draft.chosen { border-color: var(--accent); }
+.thumb-draft-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.thumb-check { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: var(--radius-pill); font-family: var(--font-mono); font-size: 10.5px; }
+.thumb-check.ok { background: var(--accent-soft); color: var(--accent); }
+.thumb-check.bad { background: rgba(255,122,89,.12); color: var(--danger); }
+.thumb-chosen { padding: 2px 7px; border-radius: var(--radius-pill); background: var(--accent); color: var(--page); font-size: 10.5px; font-weight: 600; }
+.thumb-check-notes { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.thumb-check-notes strong { color: var(--ink); font-weight: 600; }
+.thumb-stars { display: flex; gap: 2px; }
+.thumb-stars button { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--accent); cursor: pointer; }
+.thumb-stars button:hover { background: var(--accent-soft); }
+.thumb-draft-note { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-soft); color: var(--ink); font-size: 11.5px; }
+.thumb-draft-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.thumb-draft-actions .ghost-button, .thumb-draft-actions .secondary-button { display: inline-flex; align-items: center; gap: 5px; }
 .thumb-link-form { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 22px 0; }
 .thumb-link-form input { flex: 1 1 240px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-soft); color: var(--ink); font-size: 12px; }
 .thumb-link-form input:focus { outline: 1px solid var(--accent); }

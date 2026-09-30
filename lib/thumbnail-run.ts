@@ -24,6 +24,7 @@ import {
   type ThumbnailLayer,
   type ThumbnailPlanVariant,
   type ThumbnailRun,
+  type ThumbnailImageKind,
   type ThumbnailStage,
   type ThumbnailVariant,
 } from "./thumbnail-builder.ts";
@@ -51,8 +52,8 @@ export class ThumbnailRunError extends Error {
   }
 }
 
-type BridgeReference = { id: string; title: string; channelTitle: string; factor: number; views: number; source?: "manual"; note?: string; path: string };
-type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[]; rules?: string; direction?: string };
+export type BridgeReference = { id: string; title: string; channelTitle: string; factor: number; views: number; source?: "manual"; note?: string; path: string };
+export type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[]; rules?: string; direction?: string };
 
 /** Chris' thumbnail playbook, short form, sent to the planner as binding rules. */
 export const THUMBNAIL_RULES_MAX = 8_000;
@@ -73,14 +74,14 @@ export async function loadThumbnailRules(env: Record<string, string | undefined>
 export type ThumbnailRunDeps = {
   faces?: () => Promise<FaceReference[]>;
   rules?: () => Promise<{ text: string; source: string } | undefined>;
-  bridge?: (route: "plan" | "render", body: unknown) => Promise<unknown>;
+  bridge?: (route: "plan" | "render" | "check", body: unknown) => Promise<unknown>;
   cacheReference?: (reference: ThumbnailReference) => Promise<string>;
   now?: () => Date;
   /** Store root; tests point it at a temp folder. */
   dir?: string;
 };
 
-async function callBridge(route: "plan" | "render", body: unknown) {
+export async function callBridge(route: "plan" | "render" | "check", body: unknown) {
   let response: Response;
   try {
     response = await fetch(`${STRATEGY_BRIDGE_URL}/v1/thumbnails/${route}`, {
@@ -102,7 +103,7 @@ async function callBridge(route: "plan" | "render", body: unknown) {
   return payload;
 }
 
-async function requireFaces(load: () => Promise<FaceReference[]>) {
+export async function requireFaces(load: () => Promise<FaceReference[]>) {
   let faces: FaceReference[];
   try {
     faces = await load();
@@ -116,7 +117,7 @@ async function requireFaces(load: () => Promise<FaceReference[]>) {
 }
 
 /** Downloads (once) every reference image; a thumbnail that cannot be fetched drops out of the run. */
-async function bridgeReferences(references: ThumbnailReference[], cache: (reference: ThumbnailReference) => Promise<string>) {
+export async function bridgeReferences(references: ThumbnailReference[], cache: (reference: ThumbnailReference) => Promise<string>) {
   const settled = await Promise.allSettled(references.map(async (reference) => ({
     id: reference.videoId,
     title: reference.title,
@@ -133,14 +134,14 @@ async function bridgeReferences(references: ThumbnailReference[], cache: (refere
 }
 
 /** Decodes and crops one render to 16:9; nothing is written yet. */
-function fitRender(payload: unknown) {
+export function fitRender(payload: unknown) {
   const image = parseRenderImage(payload);
   const bytes = Buffer.from(image.data, "base64");
   return image.mimeType === "image/png" ? cropPngToRatio(bytes, 16, 9) : { bytes, width: undefined, height: undefined };
 }
 
 /** Stores one fitted layer image; returns the layer. */
-async function persistLayer(runId: string, variantId: string, stage: ThumbnailStage, fitted: ReturnType<typeof fitRender>, now: string, dir?: string): Promise<ThumbnailLayer> {
+export async function persistLayer(runId: string, variantId: string, stage: ThumbnailImageKind, fitted: ReturnType<typeof fitRender>, now: string, dir?: string): Promise<ThumbnailLayer> {
   const saved = await store.writeVariantImage(runId, variantId, fitted.bytes, { dir, stage });
   return {
     imagePath: saved.imagePath,
@@ -150,7 +151,7 @@ async function persistLayer(runId: string, variantId: string, stage: ThumbnailSt
   };
 }
 
-function planForBridge(variant: ThumbnailVariant | ThumbnailPlanVariant) {
+export function planForBridge(variant: ThumbnailVariant | ThumbnailPlanVariant) {
   return {
     label: variant.label,
     textOverlay: variant.textOverlay,
@@ -158,6 +159,7 @@ function planForBridge(variant: ThumbnailVariant | ThumbnailPlanVariant) {
     face: variant.face,
     inspiredBy: variant.inspiredBy.map((entry) => ({ videoId: entry.videoId, borrowed: entry.borrowed })),
     imagePrompt: variant.imagePrompt,
+    ...(variant.recipe ? { recipe: variant.recipe } : {}),
   };
 }
 
@@ -168,7 +170,7 @@ function planForBridge(variant: ThumbnailVariant | ThumbnailPlanVariant) {
  */
 const runQueues = new Map<string, Promise<unknown>>();
 
-function withRunLock<T>(runId: string, task: () => Promise<T>): Promise<T> {
+export function withRunLock<T>(runId: string, task: () => Promise<T>): Promise<T> {
   const previous = runQueues.get(runId) ?? Promise.resolve();
   const next = previous.catch(() => undefined).then(task);
   runQueues.set(runId, next);
@@ -178,19 +180,19 @@ function withRunLock<T>(runId: string, task: () => Promise<T>): Promise<T> {
   return next;
 }
 
-async function readRunOrFail(runId: string, dir?: string) {
+export async function readRunOrFail(runId: string, dir?: string) {
   const run = await store.readRun(runId, { dir });
   if (!run) throw new ThumbnailRunError(`Unknown thumbnail run ${runId}.`, 404);
   return run;
 }
 
-function variantOrFail(run: ThumbnailRun, variantId: string) {
+export function variantOrFail(run: ThumbnailRun, variantId: string) {
   const variant = run.variants.find((candidate) => candidate.id === variantId);
   if (!variant) throw new ThumbnailRunError(`Unknown variant ${variantId}.`, 404);
   return variant;
 }
 
-function errorMessage(error: unknown) {
+export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "The render failed.";
 }
 
@@ -358,7 +360,7 @@ export async function renderThumbnailStage(body: unknown, deps: ThumbnailRunDeps
   });
 }
 
-function replaceVariant(run: ThumbnailRun, variant: ThumbnailVariant): ThumbnailRun {
+export function replaceVariant(run: ThumbnailRun, variant: ThumbnailVariant): ThumbnailRun {
   return { ...run, variants: run.variants.map((candidate) => (candidate.id === variant.id ? variant : candidate)) };
 }
 

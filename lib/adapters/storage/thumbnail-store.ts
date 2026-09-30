@@ -4,11 +4,11 @@ import path from "node:path";
 import {
   finishedImage,
   isThumbnailRunId,
-  isThumbnailStage,
+  isThumbnailImageKind,
   isThumbnailVariantId,
   thumbnailReferenceNote,
   type ThumbnailRun,
-  type ThumbnailStage,
+  type ThumbnailImageKind,
 } from "../../thumbnail-builder.ts";
 import { isYoutubeThumbnailUrl, isYoutubeVideoId, normalizeLibrary, type ThumbnailLibrary, type ThumbnailReference } from "../../thumbnail-library.ts";
 import { sniffImageType, type ImageType } from "./cover-cache.ts";
@@ -93,14 +93,14 @@ function runDirectory(runId: string, dir: string) {
 }
 
 /** File stem of one image; no stage is the legacy finished image. Ids are checked before a path is built. */
-function imageStem(variantId: string, stage?: ThumbnailStage) {
+function imageStem(variantId: string, stage?: ThumbnailImageKind) {
   if (!isThumbnailVariantId(variantId)) throw new Error("Thumbnail variant id is invalid.");
-  if (stage !== undefined && !isThumbnailStage(stage)) throw new Error("Thumbnail stage is invalid.");
+  if (stage !== undefined && !isThumbnailImageKind(stage)) throw new Error("Thumbnail stage is invalid.");
   return stage ? `${variantId}-${stage}` : variantId;
 }
 
 /** Writes one layer (or, without a stage, a finished image) below the run folder and returns its repo-relative path. */
-export async function writeVariantImage(runId: string, variantId: string, bytes: Uint8Array, options: StoreOptions & { stage?: ThumbnailStage } = {}) {
+export async function writeVariantImage(runId: string, variantId: string, bytes: Uint8Array, options: StoreOptions & { stage?: ThumbnailImageKind } = {}) {
   const dir = options.dir ?? THUMBNAIL_DIR;
   const stem = imageStem(variantId, options.stage);
   if (bytes.length === 0 || bytes.length > MAX_BYTES) throw new Error("Generated thumbnail is too large.");
@@ -116,8 +116,8 @@ export async function writeVariantImage(runId: string, variantId: string, bytes:
 }
 
 /** Absolute path of a stored image, for the Bridge only; null when there is none. */
-export async function variantImageFile(runId: string, variantId: string, options: StoreOptions & { stage?: ThumbnailStage } = {}) {
-  if (!isThumbnailRunId(runId) || !isThumbnailVariantId(variantId) || (options.stage !== undefined && !isThumbnailStage(options.stage))) return null;
+export async function variantImageFile(runId: string, variantId: string, options: StoreOptions & { stage?: ThumbnailImageKind } = {}) {
+  if (!isThumbnailRunId(runId) || !isThumbnailVariantId(variantId) || (options.stage !== undefined && !isThumbnailImageKind(options.stage))) return null;
   const folder = runDirectory(runId, options.dir ?? THUMBNAIL_DIR);
   for (const extension of Object.values(EXTENSIONS)) {
     const file = path.join(folder, `${imageStem(variantId, options.stage)}.${extension}`);
@@ -127,8 +127,8 @@ export async function variantImageFile(runId: string, variantId: string, options
   return null;
 }
 
-export async function readVariantImage(runId: string, variantId: string, options: StoreOptions & { stage?: ThumbnailStage } = {}) {
-  if (!isThumbnailRunId(runId) || !isThumbnailVariantId(variantId) || (options.stage !== undefined && !isThumbnailStage(options.stage))) return null;
+export async function readVariantImage(runId: string, variantId: string, options: StoreOptions & { stage?: ThumbnailImageKind } = {}) {
+  if (!isThumbnailRunId(runId) || !isThumbnailVariantId(variantId) || (options.stage !== undefined && !isThumbnailImageKind(options.stage))) return null;
   const folder = runDirectory(runId, options.dir ?? THUMBNAIL_DIR);
   for (const extension of Object.values(EXTENSIONS)) {
     try {
@@ -143,7 +143,7 @@ export async function readVariantImage(runId: string, variantId: string, options
 }
 
 /** Deletes one layer's image in every extension. */
-export async function removeVariantImage(runId: string, variantId: string, stage: ThumbnailStage, options: StoreOptions = {}) {
+export async function removeVariantImage(runId: string, variantId: string, stage: ThumbnailImageKind, options: StoreOptions = {}) {
   const folder = runDirectory(runId, options.dir ?? THUMBNAIL_DIR);
   const stem = imageStem(variantId, stage);
   for (const extension of Object.values(EXTENSIONS)) await rm(path.join(folder, `${stem}.${extension}`), { force: true });

@@ -37,6 +37,17 @@ export type ThumbnailRequest = {
 /** Layer order of the Ebenen-Ablauf; each stage renders on top of the approved previous one. */
 export const THUMBNAIL_STAGES = ["background", "person", "text"] as const;
 export type ThumbnailStage = (typeof THUMBNAIL_STAGES)[number];
+/** Stored image kinds: the three layers plus the one-shot draft of a draft run. */
+export type ThumbnailImageKind = ThumbnailStage | "draft";
+
+export function isThumbnailImageKind(value: unknown): value is ThumbnailImageKind {
+  return value === "draft" || isThumbnailStage(value);
+}
+
+/** A draft run plans many variants at once; each renders in one image and gets an automatic check. */
+export const THUMBNAIL_DRAFT_MIN = 3;
+export const THUMBNAIL_DRAFT_MAX = 20;
+export const THUMBNAIL_DRAFT_DEFAULT = 15;
 
 export type ThumbnailImagePrompt = {
   subject: string;
@@ -53,21 +64,26 @@ export type ThumbnailImagePrompt = {
 };
 
 export type ThumbnailElements = {
-  layout: "person-right" | "person-left" | "person-center";
-  backdrop: "cream" | "coral" | "charcoal" | "navy";
-  object: { kind: "terminal-window" | "browser-window" | "icon-tiles" | "logo-equation" | "device" | "chart-card"; description: string };
-  textStyle: "condensed-caps" | "serif";
-  textPlacement: "beside" | "behind-person" | "bottom";
+  layout: (typeof ELEMENT_CHOICES.layout)[number];
+  backdrop: (typeof ELEMENT_CHOICES.backdrop)[number];
+  object: { kind: (typeof ELEMENT_CHOICES.objectKind)[number]; description: string };
+  textStyle: (typeof ELEMENT_CHOICES.textStyle)[number];
+  textPlacement: (typeof ELEMENT_CHOICES.textPlacement)[number];
   wardrobe?: "hoodie-cream" | "hoodie-charcoal" | "hoodie-rust" | "tee-black" | "overshirt-dark";
   gesture?: "none" | "hands-clasped" | "pointing" | "holding-phone";
 };
 
+/** Mirrors the enums in bridge/thumbnails.mjs. */
 const ELEMENT_CHOICES = {
-  layout: ["person-right", "person-left", "person-center"],
-  backdrop: ["cream", "coral", "charcoal", "navy"],
-  objectKind: ["terminal-window", "browser-window", "icon-tiles", "logo-equation", "device", "chart-card"],
-  textStyle: ["condensed-caps", "serif"],
-  textPlacement: ["beside", "behind-person", "bottom"],
+  layout: ["person-right", "person-left", "person-center", "no-person"],
+  backdrop: ["cream", "coral", "charcoal", "navy", "black", "royal-blue", "light-grey", "graph-paper", "split"],
+  objectKind: [
+    "terminal-window", "browser-window", "icon-tiles", "logo-equation", "device", "chart-card",
+    "icon-halo", "whiteboard", "monitor-wall", "pixel-mascot", "tier-cards", "old-new-pills", "phone-duel",
+    "curve-chart", "ui-toggle", "open-head",
+  ],
+  textStyle: ["condensed-caps", "serif", "sentence-chalk", "geometric-black", "grotesk-serif-mix", "stacked-caps"],
+  textPlacement: ["beside", "behind-person", "bottom", "top", "label-box"],
   wardrobe: ["hoodie-cream", "hoodie-charcoal", "hoodie-rust", "tee-black", "overshirt-dark"],
   gesture: ["none", "hands-clasped", "pointing", "holding-phone"],
 } as const;
@@ -113,6 +129,29 @@ export function referenceStrength(reference: { factor: number; source?: "outlier
   return `${reference.factor.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}x Kanal-Median`;
 }
 
+/** What the automatic image check found on a draft. passed is derived from the hard criteria. */
+export type ThumbnailCheck = {
+  passed: boolean;
+  /** 1 to 10: how strongly it would make a viewer in Chris' niche click. */
+  score: number;
+  /** null for a draft without Chris. */
+  recognizable: boolean | null;
+  textExact: boolean;
+  wordCount: number;
+  elementCount: number;
+  cornerFree: boolean;
+  numbersConsistent: boolean;
+  skinOk: boolean | null;
+  faceBigEnough: boolean | null;
+  eyeContact: boolean | null;
+  textClearOfFace: boolean | null;
+  readableSmall: boolean;
+  notes: string;
+  checkedAt: string;
+};
+
+export type ThumbnailRating = { stars: number; note?: string; ratedAt: string };
+
 /** One rendered layer. A failed first render keeps only renderedAt and error. */
 export type ThumbnailLayer = {
   imagePath?: string;
@@ -135,6 +174,11 @@ export type ThumbnailVariant = {
   imagePrompt: ThumbnailImagePrompt;
   /** Layer flow; missing on runs from before it, which only carry the finished image below. */
   layers?: Partial<Record<ThumbnailStage, ThumbnailLayer>>;
+  /** Draft runs: the recipe the variant follows, its one-shot image and the automatic check. */
+  recipe?: string;
+  draft?: ThumbnailLayer & { pending?: boolean; check?: ThumbnailCheck; checkError?: string };
+  /** Chris' own rating of a draft. */
+  rating?: ThumbnailRating;
   /** Legacy finished image (person, text and background in one render), read-only. */
   imagePath?: string;
   imageUrl?: string;
@@ -146,6 +190,8 @@ export type ThumbnailVariant = {
 
 export type ThumbnailRun = {
   id: string;
+  /** "drafts": many one-shot variants with an automatic check; missing means the layer flow. */
+  kind?: "drafts";
   title: string;
   /** Bounded excerpt of the brief, enough to recognise the run later. */
   briefExcerpt: string;
@@ -165,7 +211,7 @@ export type ThumbnailRun = {
 export type ThumbnailRenderImage = { mimeType: "image/png" | "image/jpeg" | "image/webp"; data: string };
 
 /** One planned variant as the Bridge returns it, before the app joins the Outlier snapshot. */
-export type ThumbnailPlanVariant = Pick<ThumbnailVariant, "label" | "textOverlay" | "concept" | "face" | "imagePrompt"> & {
+export type ThumbnailPlanVariant = Pick<ThumbnailVariant, "label" | "textOverlay" | "concept" | "face" | "imagePrompt" | "recipe"> & {
   inspiredBy: { videoId: string; borrowed: string }[];
 };
 
@@ -215,7 +261,7 @@ export function isThumbnailStage(value: unknown): value is ThumbnailStage {
 
 /** Runs from before the layer flow: one finished image per variant, no layers. */
 export function isLegacyVariant(variant: ThumbnailVariant) {
-  return variant.layers === undefined;
+  return variant.layers === undefined && variant.draft === undefined;
 }
 
 /** A layer counts once it has an image and no error. */
@@ -254,8 +300,9 @@ export function latestLayerStage(variant: ThumbnailVariant): ThumbnailStage | un
   return [...THUMBNAIL_STAGES].reverse().find((stage) => hasLayerImage(variant.layers?.[stage]));
 }
 
-/** The finished thumbnail: the approved text layer, or the legacy image of an older run. */
-export function finishedImage(variant: ThumbnailVariant): { stage?: ThumbnailStage; imagePath: string } | null {
+/** The finished thumbnail: the approved text layer, a draft image, or the legacy image of an older run. */
+export function finishedImage(variant: ThumbnailVariant): { stage?: ThumbnailImageKind; imagePath: string } | null {
+  if (variant.draft) return hasLayerImage(variant.draft) ? { stage: "draft", imagePath: variant.draft.imagePath } : null;
   if (isLegacyVariant(variant)) return variant.imagePath && !variant.error ? { imagePath: variant.imagePath } : null;
   const text = variant.layers?.text;
   return isLayerApproved(text) && text?.imagePath ? { stage: "text", imagePath: text.imagePath } : null;
@@ -319,11 +366,12 @@ export function parseRenderImage(value: unknown): ThumbnailRenderImage {
  */
 export function parseThumbnailPlan(
   value: unknown,
-  options: { referenceIds: string[]; faces: string[] },
+  options: { referenceIds: string[]; faces: string[]; count?: number },
 ): ThumbnailPlanVariant[] {
   if (!isObject(value) || !Array.isArray(value.variants)) throw new Error("Thumbnail plan variants are missing.");
-  if (value.variants.length !== THUMBNAIL_VARIANT_COUNT) {
-    throw new Error(`Thumbnail plan needs exactly ${THUMBNAIL_VARIANT_COUNT} variants.`);
+  const expected = options.count ?? THUMBNAIL_VARIANT_COUNT;
+  if (value.variants.length !== expected) {
+    throw new Error(`Thumbnail plan needs exactly ${expected} variants.`);
   }
   return value.variants.map((item, index) => {
     const where = `Thumbnail variant ${index + 1}`;
@@ -345,8 +393,63 @@ export function parseThumbnailPlan(
       face,
       inspiredBy: unique.slice(0, THUMBNAIL_INSPIRED_MAX),
       imagePrompt: imagePrompt(item.imagePrompt, where),
+      ...(typeof item.recipe === "string" && /^[a-z-]{2,40}$/.test(item.recipe) ? { recipe: item.recipe } : {}),
     };
   });
+}
+
+/**
+ * The automatic check of a draft, bounded; passed follows the hard criteria:
+ * Chris recognizable (when shown), headline exact, at most six words in total,
+ * two to four main blocks, free lower-right corner, consistent counts, skin
+ * not pale or plastic, face at least a third of the height, no text over eyes
+ * or mouth, headline readable at 168 px.
+ */
+export function draftCheckFrom(value: unknown, now: string): ThumbnailCheck {
+  const check = isObject(value) && isObject(value.check) ? value.check : {};
+  const flag = (field: string) => check[field] === true;
+  const maybe = (field: string) => (check[field] === null || check[field] === undefined ? null : check[field] === true);
+  const count = (field: string) => (typeof check[field] === "number" && Number.isFinite(check[field]) ? Math.max(0, Math.round(check[field] as number)) : 99);
+  const result = {
+    recognizable: maybe("recognizable"),
+    textExact: flag("textExact"),
+    wordCount: count("wordCount"),
+    elementCount: count("elementCount"),
+    cornerFree: flag("cornerFree"),
+    numbersConsistent: flag("numbersConsistent"),
+    skinOk: maybe("skinOk"),
+    faceBigEnough: maybe("faceBigEnough"),
+    eyeContact: maybe("eyeContact"),
+    textClearOfFace: maybe("textClearOfFace"),
+    readableSmall: flag("readableSmall"),
+    score: Math.min(10, Math.max(1, count("score") === 99 ? 1 : count("score"))),
+    notes: bounded(check.notes, 400),
+  };
+  // Hard criteria from the research of 105 creator thumbnails; eye contact is a should, not a must.
+  const passed = result.recognizable !== false && result.textExact && result.wordCount <= 6 && result.elementCount <= 4
+    && result.cornerFree && result.numbersConsistent && result.skinOk !== false
+    && result.faceBigEnough !== false && result.textClearOfFace !== false && result.readableSmall;
+  return { ...result, passed, checkedAt: now };
+}
+
+/** Best first: passed drafts by score, then the rest by score; unrendered last. */
+export function rankDrafts(variants: ThumbnailVariant[]) {
+  const weight = (variant: ThumbnailVariant) => {
+    const check = variant.draft?.check;
+    if (!check) return hasLayerImage(variant.draft) ? 0 : -1;
+    return (check.passed ? 100 : 0) + check.score;
+  };
+  return [...variants].sort((a, b) => weight(b) - weight(a));
+}
+
+/** POST /api/youtube/thumbnails/rate: { runId, variantId, stars 1-5, note? }. */
+export function parseRatingRequest(body: unknown): { runId: string; variantId: string; stars: number; note?: string } {
+  const ids = parseVariantRequest(body);
+  const input = isObject(body) ? body : {};
+  const stars = input.stars;
+  if (typeof stars !== "number" || !Number.isInteger(stars) || stars < 1 || stars > 5) throw new Error("stars must be 1 to 5.");
+  const note = bounded(input.note, 300);
+  return { ...ids, stars, ...(note ? { note } : {}) };
 }
 
 /** Joins the planner's reference ids with the library snapshot the run offered. */
@@ -374,7 +477,8 @@ export function isThumbnailRunId(value: unknown): value is string {
 }
 
 export function isThumbnailVariantId(value: unknown): value is string {
-  return typeof value === "string" && /^variant-[1-9]$/.test(value);
+  // Draft runs hold up to THUMBNAIL_DRAFT_MAX (20) variants.
+  return typeof value === "string" && /^variant-([1-9]|1[0-9]|20)$/.test(value);
 }
 
 export function newThumbnailRunId(now: Date, random = Math.random) {
@@ -384,7 +488,7 @@ export function newThumbnailRunId(now: Date, random = Math.random) {
 }
 
 /** Without a stage it is the legacy finished image. */
-export function thumbnailImageUrl(runId: string, variantId: string, stage?: ThumbnailStage) {
+export function thumbnailImageUrl(runId: string, variantId: string, stage?: ThumbnailImageKind) {
   const url = `/api/youtube/thumbnails/image/${runId}/${variantId}`;
   return stage ? `${url}?stage=${stage}` : url;
 }

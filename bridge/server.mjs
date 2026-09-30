@@ -10,6 +10,9 @@ import {
 } from "./transcript-analysis.mjs";
 import {
   assertImageFiles,
+  buildCheckInput,
+  checkOutputSchema,
+  validateCheckRequest,
   buildThumbnailImageInput,
   buildThumbnailPlanInput,
   normalizeThumbnailPlan,
@@ -106,13 +109,13 @@ function createCodex() {
 }
 
 /** One Codex turn under the read-only sandbox. The routes differ only in prompt (text or text plus images) and schema. */
-async function runCodex(prompt, outputSchema) {
+async function runCodex(prompt, outputSchema, timeoutMs = 120_000) {
   if (codexAuthState() === "logged-out") {
     throw Object.assign(new Error("Codex is not logged in. Run `codex login` in a terminal."), { status: 503 });
   }
   const codex = createCodex();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const thread = codex.startThread({
@@ -280,7 +283,9 @@ const routes = new Map([
       run: async (input) => {
         const request = validateThumbnailRequest(input);
         await assertImageFiles(request.references.map((reference) => reference.path));
-        return { variants: normalizeThumbnailPlan(await runCodex(buildThumbnailPlanInput(request), thumbnailPlanOutputSchema(request)), request) };
+        // A draft run plans up to 20 variants; stay inside the app's five-minute fetch window.
+        const timeout = request.drafts ? 280_000 : 120_000;
+        return { variants: normalizeThumbnailPlan(await runCodex(buildThumbnailPlanInput(request), thumbnailPlanOutputSchema(request), timeout), request) };
       },
     },
   ],
@@ -296,6 +301,18 @@ const routes = new Map([
         const render = buildThumbnailImageInput(request, variant, stage);
         await assertImageFiles(render.images);
         return { image: await renderCoverWithCodex(render.text, render.images, render.refine ? { refine: render.refine } : {}) };
+      },
+    },
+  ],
+  [
+    "/v1/thumbnails/check",
+    {
+      label: "Thumbnail check",
+      failure: "The local Codex thumbnail check failed.",
+      run: async (input) => {
+        const request = validateCheckRequest(input);
+        await assertImageFiles([request.image, ...request.faces.map((face) => face.path)]);
+        return { check: await runCodex(buildCheckInput(request), checkOutputSchema) };
       },
     },
   ],

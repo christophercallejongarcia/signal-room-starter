@@ -5,7 +5,8 @@ import { Codex } from "@openai/codex-sdk";
 import { codexAuthState, codexPathOverride } from "./auth.mjs";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const IMAGE_TIMEOUT_MS = 240_000;
+/** Two image_gen passes (render plus retouch) can take four minutes; stay inside the app's five-minute fetch window. */
+const IMAGE_TIMEOUT_MS = 285_000;
 /**
  * One fixed working directory for every render. Codex records each working
  * directory it runs in as trusted in ~/.codex/config.toml, so a fresh temp

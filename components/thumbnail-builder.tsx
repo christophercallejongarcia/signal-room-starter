@@ -16,6 +16,7 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { formatNumber } from "@/components/display";
+import { DraftGallery, draftIsRendering } from "@/components/thumbnail-drafts";
 import type { YoutubeVideo } from "@/lib/contracts";
 import type { FaceReferenceStatus } from "@/lib/face-references";
 import {
@@ -101,6 +102,7 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
   const [direction, setDirection] = useState("");
+  const [draftCount, setDraftCount] = useState(15);
   const [picked, setPicked] = useState<string[] | null>(null);
   const [running, setRunning] = useState(false);
   const [tasks, setTasks] = useState<Record<string, VariantTask>>({});
@@ -138,6 +140,13 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
   }, []);
 
   useEffect(() => { void loadBuilder(); }, [loadBuilder]);
+  // A draft run renders in the background; reload until every draft is done.
+  const draftsRendering = builder.runs.some((run) => run.kind === "drafts" && run.variants.some((variant) => draftIsRendering(variant)));
+  useEffect(() => {
+    if (!draftsRendering) return;
+    const timer = window.setInterval(() => void loadBuilder(), 8_000);
+    return () => window.clearInterval(timer);
+  }, [draftsRendering, loadBuilder]);
   useEffect(() => { void loadLibrary(market); }, [loadLibrary, market]);
 
   // Until Chris picks, a run offers the newest marks.
@@ -153,6 +162,30 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
       if (base.includes(videoId)) return base.filter((id) => id !== videoId);
       return base.length >= THUMBNAIL_REFERENCES_MAX ? base : [...base, videoId];
     });
+  }
+
+  async function generateDrafts() {
+    setRunning(true);
+    setError("");
+    try {
+      const response = await fetch("/api/youtube/thumbnails/drafts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title, brief, direction, referenceIds: offered, count: draftCount }),
+      });
+      const payload = await readJson<{ run: ThumbnailRun }>(response);
+      if (!response.ok || !payload.run) throw new Error(payload.error || `Der Lauf antwortete mit HTTP ${response.status}.`);
+      setBuilder((current) => ({ ...current, runs: [payload.run, ...current.runs.filter((run) => run.id !== payload.run.id)] }));
+      setSelectedRun(payload.run.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Der Lauf ist fehlgeschlagen.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  function replaceRun(run: ThumbnailRun) {
+    setBuilder((current) => ({ ...current, runs: current.runs.map((candidate) => (candidate.id === run.id ? run : candidate)) }));
   }
 
   async function generate() {
@@ -374,9 +407,17 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
         </div>
         <div className="panel-foot">
           <span>Ein Fokus · max. vier Wörter · großes Gesicht · 16:9 mit freier Ecke unten rechts.</span>
-          <button className="primary-button" type="button" onClick={generate} disabled={blocked}>
-            <ImageSquare size={15} /> {running ? "Plane und rendere drei Hintergründe…" : "Planen und 3 Hintergründe rendern"}
-          </button>
+          <span className="thumb-foot-actions">
+            <select className="thumb-run-select" value={draftCount} onChange={(event) => setDraftCount(Number(event.target.value))} aria-label="Anzahl Entwürfe">
+              {[10, 15, 20].map((count) => <option key={count} value={count}>{count} Entwürfe</option>)}
+            </select>
+            <button className="secondary-button" type="button" onClick={generateDrafts} disabled={blocked}>
+              <ImageSquare size={15} /> {running ? "Plane…" : "Entwürfe erzeugen und prüfen"}
+            </button>
+            <button className="primary-button" type="button" onClick={generate} disabled={blocked}>
+              <ImageSquare size={15} /> {running ? "Plane und rendere drei Hintergründe…" : "Planen und 3 Hintergründe rendern"}
+            </button>
+          </span>
         </div>
         {error && <div className="strategy-error"><WarningCircle size={20} weight="fill" /><h3>Kein Thumbnail</h3><p>{error}</p></div>}
       </section>
@@ -385,14 +426,15 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
         <div><p className="kicker">Ergebnisse</p><h2>{shown ? shown.title : "Noch kein Lauf"}</h2></div>
         {builder.runs.length > 1 && (
           <select className="thumb-run-select" value={shown?.id ?? ""} onChange={(event) => setSelectedRun(event.target.value)} aria-label="Lauf wählen">
-            {builder.runs.map((run) => <option key={run.id} value={run.id}>{new Date(run.createdAt).toLocaleString("de-DE")} · {run.title.slice(0, 60)}</option>)}
+            {builder.runs.map((run) => <option key={run.id} value={run.id}>{new Date(run.createdAt).toLocaleString("de-DE")} · {run.kind === "drafts" ? `${run.variants.length} Entwürfe · ` : ""}{run.title.slice(0, 60)}</option>)}
           </select>
         )}
       </div>
       {builder.phase === "loading" && <div className="empty-state">Lade Läufe…</div>}
       {builder.phase === "error" && <div className="empty-state">Läufe konnten nicht geladen werden.</div>}
       {builder.phase === "ready" && !shown && <div className="empty-state">Noch keine Thumbnails. Titel eintragen, Vorlagen wählen, Hintergründe rendern.</div>}
-      {shown && (
+      {shown?.kind === "drafts" && <DraftGallery run={shown} disabled={bridgeDown} onRunChanged={replaceRun} />}
+      {shown && shown.kind !== "drafts" && (
         <div className="thumb-variant-grid">
           {shown.variants.map((variant, index) => {
             const key = variantKey(shown, variant);
