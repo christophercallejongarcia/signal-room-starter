@@ -6,7 +6,8 @@ import path from "node:path";
 import { deflateSync } from "node:zlib";
 import { draftCheckFrom, parseRatingRequest, rankDrafts } from "../lib/thumbnail-builder.ts";
 import { markThumbnailReference } from "../lib/thumbnail-run.ts";
-import { draftChunks, isDraftRendering, rateThumbnailDraft, rerenderThumbnailDraft, runThumbnailDrafts } from "../lib/thumbnail-drafts.ts";
+import { DRAFT_RECIPE_ORDER, draftChunks, isDraftRendering, rateThumbnailDraft, rerenderThumbnailDraft, runThumbnailDrafts } from "../lib/thumbnail-drafts.ts";
+import { THUMBNAIL_RECIPE_NAMES } from "../lib/thumbnail-recipe-names.ts";
 import { readRun } from "../lib/adapters/storage/thumbnail-store.ts";
 
 const NOW = "2026-09-29T22:00:00.000Z";
@@ -102,7 +103,7 @@ test("a draft run plans many variants, renders each once and checks it", async (
     const [plan] = calls;
     assert.equal(plan[0], "plan");
     assert.deepEqual([plan[1].drafts, plan[1].count, plan[1].direction], [true, 4, "Abo-Vergleich"]);
-    assert.deepEqual(plan[1].recipes, ["abo-comparison", "icon-halo", "logo-equation", "terminal-command"]);
+    assert.deepEqual(plan[1].recipes, ["abo-comparison", "hands-presenting", "icon-halo", "word-behind-head"]);
     assert.equal(run.kind, "drafts");
     assert.ok(run.variants.every((variant) => variant.draft?.pending), "the route answers with pending drafts");
     const stored = await readRun(run.id, { dir });
@@ -165,14 +166,14 @@ test("the check follows the hard criteria and a stale pending draft may render a
   assert.equal(isDraftRendering(fresh, Date.parse(NOW) + 20 * 60_000), false);
 });
 
-test("twenty drafts plan in four chunks and use every recipe, Chris' idea twice", async () => {
+test("twenty drafts plan in four chunks with Chris' idea twice; the order covers every recipe", async () => {
   const { THUMBNAIL_RECIPES } = await import("../bridge/thumbnails.mjs");
   const chunks = draftChunks(20);
   assert.deepEqual(chunks.map((chunk) => chunk.length), [5, 5, 5, 5]);
-  const used = chunks.flat();
-  assert.deepEqual([...new Set(used)].sort(), Object.keys(THUMBNAIL_RECIPES).sort());
-  assert.ok(used.filter((id) => id === "abo-comparison").length >= 2);
-  assert.deepEqual(draftChunks(3), [["abo-comparison", "icon-halo", "logo-equation"]]);
+  assert.equal(chunks.flat().filter((id) => id === "abo-comparison").length, 2);
+  assert.deepEqual([...new Set(DRAFT_RECIPE_ORDER)].sort(), Object.keys(THUMBNAIL_RECIPES).sort());
+  assert.deepEqual(Object.keys(THUMBNAIL_RECIPE_NAMES).sort(), Object.keys(THUMBNAIL_RECIPES).sort(), "every recipe has a name in Cover Lab");
+  assert.deepEqual(draftChunks(3), [["abo-comparison", "hands-presenting", "icon-halo"]]);
   assert.deepEqual(draftChunks(3, ["tier-cards", "ui-toggle"]), [["tier-cards", "ui-toggle", "tier-cards"]], "picked formats fill the slots");
 });
 

@@ -1736,3 +1736,8 @@ main {
   .yt-radar .signal-grid { grid-template-columns: minmax(0, 1fr); }
 }
 .yt-refresh-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+
+.thumb-recipes { padding: 12px 18px 4px; border-top: 1px solid var(--line); }
+.thumb-recipe-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.thumb-recipe-chips button { padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.thumb-recipe-chips button.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }

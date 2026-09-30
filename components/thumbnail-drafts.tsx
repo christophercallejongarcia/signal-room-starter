@@ -3,27 +3,7 @@
 import { ArrowCounterClockwise, CheckCircle, CircleNotch, Star, WarningCircle, XCircle } from "@phosphor-icons/react";
 import { useState } from "react";
 import { rankDrafts, type ThumbnailCheck, type ThumbnailRun, type ThumbnailVariant } from "@/lib/thumbnail-builder";
-
-/** Recipe names as Chris reads them. */
-const RECIPE_NAMES: Record<string, string> = {
-  "icon-halo": "Icon-Bogen (Tristen)",
-  "terminal-command": "Terminal-Befehl (Tristen)",
-  "word-behind-head": "Wort hinter dem Kopf (Tristen)",
-  "cream-surprise": "Creme mit Staunen (Tristen)",
-  "logo-equation": "Logo-Gleichung (Nate, Jack)",
-  "whiteboard-course": "Whiteboard-Kurs (Nate)",
-  "proof-pointing": "Beweis mit Zeigefinger (Nate, Jack)",
-  "old-vs-new": "Alt gegen Neu (Nate, Jack)",
-  "tier-cards": "Stufen-Karten (Mark)",
-  "ai-os-command": "KI-OS-Kommandozentrale (Mark)",
-  "stripe-outline": "Streifen-Gliederung (Mark)",
-  "graph-paper-curve": "Millimeterpapier-Kurve (Kallaway)",
-  "normal-vs-agent": "Normal gegen Agent (Kallaway)",
-  "open-head": "Offener Kopf (Kallaway)",
-  "ui-toggle": "UI-Umschalter (Jeff Su)",
-  "giant-face-stack": "Riesengesicht mit Stapel-Text (Riley Brown)",
-  "abo-comparison": "Abo-Vergleich (deine Idee)",
-};
+import { THUMBNAIL_RECIPE_NAMES } from "@/lib/thumbnail-recipe-names";
 
 /** A pending draft older than this was cut off (server restart); mirrors DRAFT_STALE_MS. */
 const STALE_MS = 15 * 60_000;
@@ -107,7 +87,7 @@ export function DraftGallery({ run, disabled, onRunChanged }: { run: ThumbnailRu
               </div>
               <div className="thumb-variant-body">
                 <div className="thumb-draft-head">
-                  <span className="kicker">{RECIPE_NAMES[variant.recipe ?? ""] ?? variant.recipe ?? "Entwurf"}</span>
+                  <span className="kicker">{THUMBNAIL_RECIPE_NAMES[variant.recipe ?? ""] ?? variant.recipe ?? "Entwurf"}</span>
                   {check && (
                     <span className={check.passed ? "thumb-check ok" : "thumb-check bad"} title={check.notes}>
                       {check.passed ? <CheckCircle size={12} weight="fill" /> : <XCircle size={12} weight="fill" />} {check.score}/10

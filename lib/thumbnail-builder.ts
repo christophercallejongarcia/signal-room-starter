@@ -70,7 +70,7 @@ export type ThumbnailElements = {
   textStyle: (typeof ELEMENT_CHOICES.textStyle)[number];
   textPlacement: (typeof ELEMENT_CHOICES.textPlacement)[number];
   wardrobe?: "hoodie-cream" | "hoodie-charcoal" | "hoodie-rust" | "tee-black" | "overshirt-dark";
-  gesture?: "none" | "hands-clasped" | "pointing" | "holding-phone";
+  gesture?: (typeof ELEMENT_CHOICES.gesture)[number];
 };
 
 /** Mirrors the enums in bridge/thumbnails.mjs. */
@@ -80,12 +80,13 @@ const ELEMENT_CHOICES = {
   objectKind: [
     "terminal-window", "browser-window", "icon-tiles", "logo-equation", "device", "chart-card",
     "icon-halo", "whiteboard", "monitor-wall", "pixel-mascot", "tier-cards", "old-new-pills", "phone-duel",
-    "curve-chart", "ui-toggle", "open-head",
+    "curve-chart", "ui-toggle", "open-head", "held-objects", "hero-icon", "number-grid", "level-columns",
+    "metaphor-object",
   ],
   textStyle: ["condensed-caps", "serif", "sentence-chalk", "geometric-black", "grotesk-serif-mix", "stacked-caps"],
-  textPlacement: ["beside", "behind-person", "bottom", "top", "label-box"],
+  textPlacement: ["beside", "behind-person", "bottom", "top", "label-box", "label-box-coral"],
   wardrobe: ["hoodie-cream", "hoodie-charcoal", "hoodie-rust", "tee-black", "overshirt-dark"],
-  gesture: ["none", "hands-clasped", "pointing", "holding-phone"],
+  gesture: ["none", "hands-clasped", "pointing", "holding-phone", "open-palms"],
 } as const;
 
 function oneOf<T extends string>(value: unknown, choices: readonly T[], where: string, field: string): T {

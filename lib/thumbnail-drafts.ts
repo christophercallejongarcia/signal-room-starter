@@ -59,11 +59,17 @@ export type DraftDeps = ThumbnailRunDeps & {
   inline?: boolean;
 };
 
-/** Recipe ids of bridge/thumbnails.mjs, in the order a draft run fills its slots; Chris' own idea twice. */
+/**
+ * Recipe ids of bridge/thumbnails.mjs, in the order a draft run fills its slots:
+ * the premium patterns from the whole reference library first, Chris' own idea
+ * twice within twenty. Picking recipes in Cover Lab replaces this order.
+ */
 export const DRAFT_RECIPE_ORDER = [
-  "abo-comparison", "icon-halo", "logo-equation", "terminal-command", "word-behind-head", "giant-face-stack",
-  "graph-paper-curve", "cream-surprise", "ui-toggle", "tier-cards", "ai-os-command", "proof-pointing",
-  "normal-vs-agent", "whiteboard-course", "old-vs-new", "stripe-outline", "open-head", "abo-comparison",
+  "abo-comparison", "hands-presenting", "icon-halo", "word-behind-head", "hero-icon-caption", "logo-equation",
+  "labelled-tile-row", "terminal-command", "metaphor-object", "claim-label-box", "cream-surprise", "proof-pointing",
+  "tier-cards", "level-columns", "number-grid", "graph-paper-curve", "giant-face-stack", "ui-toggle",
+  "abo-comparison", "ai-os-command", "normal-vs-agent", "whiteboard-course", "old-vs-new", "stripe-outline",
+  "open-head",
 ];
 const DRAFT_CHUNK = 5;
 

@@ -162,8 +162,8 @@ export const THUMBNAIL_BACKDROPS = {
 export const THUMBNAIL_OBJECTS = {
   "terminal-window": "one clean terminal or app window card with a title bar and one short command in large monospace",
   "browser-window": "one clean browser window card showing one simple, readable result screen",
-  "icon-tiles": "a single tidy row, arc or staircase of three to six rounded icon tiles in the same style, each tile large (about 15 percent of the frame height) with a bold, simple glyph",
-  "logo-equation": "two to three rounded logo or symbol tiles joined by + or an arrow",
+  "icon-tiles": "a single tidy row, arc or staircase of three to six glossy 3D rounded tiles in the same material, each tile large (about 15 percent of the frame height) with a bold, simple glyph",
+  "logo-equation": "two to three glossy 3D logo or symbol tiles with a soft glow in their own colour, joined by + or an arrow",
   "device": "one phone or laptop showing one simple, readable screen",
   "chart-card": "one clean card with a single rising line or a ladder of levels",
   "icon-halo": "an arc of five or six floating rounded app tiles around Chris' head at eye level, terracotta glyphs, soft warm glow",
@@ -176,6 +176,11 @@ export const THUMBNAIL_OBJECTS = {
   "curve-chart": "one black line curve with three app icons as stations, the last section shooting up steeply in glowing blue",
   "ui-toggle": "one big white pill toggle with two states, the old one greyed out, the new one active and framed",
   "open-head": "a playful surreal open head with a small command centre of agents growing out of it",
+  "held-objects": "two glossy 3D objects, one floating just above each of Chris' open palms, lit by his key light with a rim glow in each object's colour",
+  "hero-icon": "one huge glossy 3D app tile (about 45 percent of the frame height) at eye level beside Chris, with depth, reflections and a soft shadow",
+  "number-grid": "one giant glowing coral number next to a grid of four to six dark cards with thin neon outlines, each numbered, each with one simple line diagram",
+  "level-columns": "three to six vertical columns side by side, each topped by a big number and a short level word, the object or figure inside grows more powerful from column to column",
+  "metaphor-object": "one real physical object that carries the idea as a metaphor (a staircase, a vending machine, a machine or a control panel), photographed like a product shot",
 };
 export const THUMBNAIL_TEXT_STYLES = {
   "condensed-caps": "heavy condensed sans serif in capitals, white or near-black, one word may be coral",
@@ -191,12 +196,16 @@ export const THUMBNAIL_TEXT_PLACEMENTS = {
   bottom: "one bold line across the bottom third, clear of the lower-right corner",
   top: "across the top, centred or left, clear of Chris' face",
   "label-box": "first line as bold white text, second line inside a rounded bright blue label box (#1E8CF0) with white text, upper left",
+  "label-box-coral": "first line as bold white or near-black caps, second line in white caps inside a rounded coral label box (#D97757), on the free side",
 };
 
 /**
  * Recipes distilled from the thumbnails of Tristen O'Brien, Nate Herk, Mark
  * Kashef and Jack Roberts (research 2026-09-29, private folder
- * ~/Movies/YT-OS/thumbnail-research). A draft run spreads its variants over them.
+ * ~/Movies/YT-OS/thumbnail-research), extended on 2026-09-30 with patterns from
+ * the whole reference library (Liam Ottley, AI Master, Simon Scrapes, AI Edge,
+ * Jordan Urbs); docs/thumbnail-muster.md lists the sources. A draft run spreads
+ * its variants over them.
  */
 export const THUMBNAIL_RECIPES = {
   "icon-halo": { person: true, spec: "Dark studio navy with blurred lights. Chris centred, head about 45 percent of the height, warm toothy smile into the camera, no hands in frame, chest cropped at the bottom edge, black t-shirt, soft key light, subtle rim light. Six rounded dark app tiles with terracotta glyphs in an arc left and right at eye level, warm glow. Two-word headline, heavy condensed caps, white, across the bottom." },
@@ -215,7 +224,14 @@ export const THUMBNAIL_RECIPES = {
   "open-head": { person: true, spec: "Light grey (#F2F2F2). Only Chris' eyes and nose at the bottom edge, looking into the camera, the top of the head open, and out of it grows a small command centre of agents, three app icons tilted left and right. At the top one word in grotesk black plus one word in italic serif with a blue hand-drawn underline." },
   "ui-toggle": { person: true, spec: "Blurred home office, anthracite (#212832) with vertical wooden slats. Chris on the left, head about 45 percent, broad toothy smile, soft daylight. One big white pill toggle with two states: the old state greyed out, the new state active with a frame, below a progress bar with a peach gradient, the Claude app tile at the lower left of the pill. Text: only the two UI words in a clean regular sans. Colours: anthracite, white, peach, Claude orange." },
   "giant-face-stack": { person: true, spec: "Black (#02050E) with a fine star field. Chris on the left, face filling about 65 percent of the height, intense look, mouth slightly open, one hand raised explaining, royal-blue t-shirt, cool key light and a strong orange contour glow around head and ears. One glowing Claude spark logo in the upper right area with an orange glow. Two lines of heavy condensed caps at the top right, line one white, line two yellow, each about 25 percent of the height." },
-  "abo-comparison": { person: true, spec: "Chris' own idea from the script hook. Split composition: left side dull and grey, a small chat bubble with 'Mails umformulieren'; right side bright and warm, a small team of glowing AI app tiles working like staff; between them one receipt or card showing the same 20 euro subscription. Chris in the middle or at one edge, big genuine smile into the camera, cream hoodie. Headline two to four words that land the contrast." },
+  "abo-comparison": { person: true, spec: "Chris' own idea from the script hook, built like Liam Ottley's presenting shots. Dark charcoal studio with a faint grid and soft vignette. Chris centred, chest up, big genuine smile into the camera, both open palms raised at chest height. Above each palm floats one glossy 3D card of the same size, both clearly showing the same price '20 €': the left card matte grey, dull, with one small envelope glyph; the right card glossy coral with a warm glow and a small team or agent glyph. Each card is lit by his key light and casts a soft shadow. Headline of two to four words across the top that lands the contrast." },
+  "hands-presenting": { person: true, spec: "Liam Ottley. Dark charcoal studio with a faint grid, soft vignette. Chris centred, chest up, both open palms raised at chest height, one glossy 3D object floating above each palm (old against new, or tool plus tool), each lit by his key light with a rim glow in its own colour. One short label in heavy condensed caps above each object, or one headline across the top. Optional: one realistic UI notification card at the bottom centre as proof." },
+  "hero-icon-caption": { person: true, spec: "Liam Ottley, Jordan Urbs. Warm, softly blurred studio. One huge glossy 3D app tile, about 45 percent of the height, at eye level on one side; Chris on the other side, natural and mid-sentence, one hand gesturing. One caption across the bottom third in heavy condensed white caps, the last word in white on a coral label box." },
+  "labelled-tile-row": { person: true, spec: "AI Master. Deep teal-to-charcoal studio. Headline top left in heavy caps, a short sub-line inside a coral label box below it. Under it a gently arcing row of four to six glossy 3D coral tiles, each with one white glyph and a small white label underneath. Chris on the right, big smile, thumb pointing at the row." },
+  "number-grid": { person: false, spec: "Mark Kashef, Simon Scrapes. Black. No person. Left third: one giant glowing coral number above two lines of heavy condensed white caps. Right two thirds: a grid of dark cards with thin coral neon outlines, each numbered in a small coral badge, each showing one simple line diagram." },
+  "level-columns": { person: false, spec: "Jack Roberts. Three to six vertical columns across the whole frame, each topped by a big white number and a short level word; inside each column the same object or figure grows more powerful from left to right, colour shifting from pale to deep. No person, or Chris small in the last column." },
+  "claim-label-box": { person: true, spec: "AI Edge, Liam Ottley. Dark studio with a faint, blurred interface in the background. A two-line claim on the left: line one heavy white caps, line two white caps inside a coral label box. Chris on the right, chest up, warm confident smile, soft key light." },
+  "metaphor-object": { person: true, spec: "Tristen O'Brien, Mark Kashef. One real physical object carries the idea as a metaphor (a staircase with glowing steps, a vending machine with command buttons, a small factory line), photographed like a premium product shot with shallow depth of field. Chris beside it, touching or pointing at the key part, smile or surprise. Short headline on the object or above it." },
 };
 
 /** Chris is photographed anew for every thumbnail, in clean studio clothes that suit the backdrop. */
@@ -231,6 +247,7 @@ export const THUMBNAIL_GESTURES = {
   "hands-clasped": "hands loosely clasped under the chin, fingers interlaced, relaxed and confident",
   pointing: "one hand pointing at the object, the finger sharp and natural",
   "holding-phone": "holding a phone toward the object, casually",
+  "open-palms": "both open palms raised at chest height, presenting the objects floating above them",
 };
 /** Fallback wardrobe for a plan made before the planner chose one: contrast to the backdrop. */
 const DEFAULT_WARDROBE = {
@@ -245,7 +262,7 @@ export const THUMBNAIL_FORMULA = [
   "Chris looks freshly photographed in a professional studio for this thumbnail, not cut out of an existing photo: plain hoodie or t-shirt, soft studio light, polished like a magazine cover, still clearly himself.",
   "Nothing else: no scene, no room, no floor, no particles, no light streaks, no extra icons, badges, arrows or decorations beyond the one object.",
   "Lots of empty backdrop. Readable on a phone at 160 px wide. Lower-right corner stays empty for the duration badge.",
-  "Soft, bright, high-key studio light on Chris with warm skin; the object is crisp and flat-clean; colours limited to the backdrop, coral, near-black and white.",
+  "Soft, bright, high-key studio light on Chris with natural skin true to the photos. The object is a premium 3D render, never flat clip art or stock pictograms: glossy glass, clay or soft-plastic material, lit by the same studio light as Chris, soft contact shadow and depth; a soft glow on the object itself is fine. Colours limited to the backdrop, coral, near-black and white plus at most one colour of the object.",
 ];
 
 export function thumbnailPlanOutputSchema(request) {
@@ -493,7 +510,7 @@ export const PERSON_REFINE = JSON.stringify({
     "face a touch slimmer and more defined at the jawline, clean beard edges",
   ],
   identity: "He stays instantly recognizable. Never change his face shape beyond a subtle refinement.",
-  finish: "A polished, crisp creator thumbnail portrait, like a magazine cover shot.",
+  finish: "A polished creator thumbnail portrait like a magazine cover shot: natural skin texture, no over-sharpening, no halo edges.",
 });
 
 const BASE_AVOID = [
@@ -574,7 +591,7 @@ function backgroundPrompt(request, variant) {
       object: {
         kind: THUMBNAIL_OBJECTS[elements.object.kind],
         shows: elements.object.description,
-        size: "large and bold, about 35 to 45 percent of the frame width, crisp, clean and flat with a soft shadow",
+        size: "large and bold, about 35 to 45 percent of the frame width, a premium 3D render with glossy material, depth and a soft contact shadow, never flat clip art",
       },
       layout: `${layoutLine(elements.layout)}. Chris is added in the next step; keep his area completely empty backdrop. Leave room for the headline (${THUMBNAIL_TEXT_PLACEMENTS[elements.textPlacement]}).`,
       inputImages: {
@@ -637,7 +654,7 @@ function personPrompt(request, variant) {
       },
       look: PERSON_LOOK,
       rule: "No text, letters or numbers anywhere. The words are added in the next step.",
-      finish: "A polished creator thumbnail portrait: clean, bright, crisp, high figure-ground contrast.",
+      finish: "A polished creator thumbnail portrait: clean, bright, natural skin without over-sharpening, high figure-ground contrast.",
       avoid: [...BASE_AVOID, ...FORMULA_AVOID, ...STAGE_AVOID.person, "turtlenecks, jackets or clothes copied from the reference photos", "outdoor light or backgrounds from the reference photos", "a cut-out or pasted look", ...variant.imagePrompt.avoid],
     };
     return { json, images: [base, ...faces.map((face) => face.path)], refine: PERSON_REFINE };
@@ -755,7 +772,7 @@ function draftPrompt(request, variant) {
       ...(styles.length ? { style: `${styleRange}: thumbnails Chris likes, style reference only. Never copy their people or text.` } : {}),
     },
     styleNotes: variant.imagePrompt.styleNotes,
-    finish: "A polished, crisp creator thumbnail, readable on a phone at 160 px wide, maximum three focus areas.",
+    finish: "A polished creator thumbnail with a sharp headline and object and natural, not over-sharpened skin, readable on a phone at 160 px wide, maximum three focus areas. The headline contrasts strongly with the backdrop: dark or coral text on light backdrops, white or coral on dark ones.",
     avoid: [...BASE_AVOID, ...FORMULA_AVOID.filter((item) => item !== "more than one object"), ...(withPerson ? STAGE_AVOID.person.filter((item) => !/text|background/.test(item)) : []), ...variant.imagePrompt.avoid],
   };
   return {

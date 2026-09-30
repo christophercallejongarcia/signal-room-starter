@@ -280,13 +280,14 @@ test("a draft run asks for many variants with a recipe each and renders one fini
   const schema = thumbnailPlanOutputSchema(drafts).properties.variants.items;
   assert.ok(schema.required.includes("recipe"));
   assert.deepEqual(schema.properties.recipe.enum, Object.keys(THUMBNAIL_RECIPES));
-  assert.match(buildThumbnailPlanInput(drafts)[0].text, /abo-comparison at least twice/);
+  const aboTwice = validateThumbnailRequest({ video: { title: "T" }, references, faces, drafts: true, count: 5, recipes: ["abo-comparison", "icon-halo"] });
+  assert.match(buildThumbnailPlanInput(aboTwice)[0].text, /abo-comparison at least twice/);
   const withRecipe = (recipe, layout) => ({ ...formulaVariant(), recipe, imagePrompt: { ...formulaVariant().imagePrompt, layout } });
   const [person] = normalizeThumbnailPlan({ variants: Array.from({ length: 20 }, () => withRecipe("abo-comparison", "person-right")) }, drafts);
   assert.equal(person.recipe, "abo-comparison");
   assert.throws(() => normalizeThumbnailPlan({ variants: Array.from({ length: 20 }, () => withRecipe("unknown", "person-right")) }, drafts), /no known recipe/);
   const render = buildThumbnailImageInput(request(), person, "draft");
-  assert.match(render.prompt.recipe.spec, /20 euro subscription/);
+  assert.match(render.prompt.recipe.spec, /20 €/);
   assert.equal(render.images.length, 3, "two face photos plus the inspiring thumbnail");
   assert.ok(render.refine);
   const [faceless] = normalizeThumbnailPlan({ variants: Array.from({ length: 20 }, () => withRecipe("logo-equation", "no-person")) }, drafts);

@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { formatNumber } from "@/components/display";
 import { DraftGallery, draftIsRendering } from "@/components/thumbnail-drafts";
+import { THUMBNAIL_RECIPE_NAMES } from "@/lib/thumbnail-recipe-names";
 import type { YoutubeVideo } from "@/lib/contracts";
 import type { FaceReferenceStatus } from "@/lib/face-references";
 import {
@@ -103,6 +104,8 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
   const [brief, setBrief] = useState("");
   const [direction, setDirection] = useState("");
   const [draftCount, setDraftCount] = useState(15);
+  /** Patterns Chris picked for the next draft run; none = the default spread over all recipes. */
+  const [recipes, setRecipes] = useState<string[]>([]);
   const [picked, setPicked] = useState<string[] | null>(null);
   const [running, setRunning] = useState(false);
   const [tasks, setTasks] = useState<Record<string, VariantTask>>({});
@@ -171,7 +174,7 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
       const response = await fetch("/api/youtube/thumbnails/drafts", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title, brief, direction, referenceIds: offered, count: draftCount }),
+        body: JSON.stringify({ title, brief, direction, referenceIds: offered, count: draftCount, ...(recipes.length ? { recipes } : {}) }),
       });
       const payload = await readJson<{ run: ThumbnailRun }>(response);
       if (!response.ok || !payload.run) throw new Error(payload.error || `Der Lauf antwortete mit HTTP ${response.status}.`);
@@ -405,11 +408,24 @@ export function ThumbnailBuilder({ bridge, onRecheckBridge }: { bridge: Bridge; 
             )}
           </div>
         </div>
+        <div className="thumb-recipes">
+          <p className="kicker">Muster für Entwürfe {recipes.length ? `· ${recipes.length} gewählt, die Entwürfe verteilen sich darauf` : "· keins gewählt, der Lauf mischt alle"}</p>
+          <div className="thumb-recipe-chips" role="group" aria-label="Muster">
+            {Object.entries(THUMBNAIL_RECIPE_NAMES).map(([id, name]) => {
+              const active = recipes.includes(id);
+              return (
+                <button type="button" key={id} className={active ? "active" : ""} aria-pressed={active} onClick={() => setRecipes((current) => (active ? current.filter((entry) => entry !== id) : [...current, id]))}>
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="panel-foot">
           <span>Ein Fokus · max. vier Wörter · großes Gesicht · 16:9 mit freier Ecke unten rechts.</span>
           <span className="thumb-foot-actions">
             <select className="thumb-run-select" value={draftCount} onChange={(event) => setDraftCount(Number(event.target.value))} aria-label="Anzahl Entwürfe">
-              {[10, 15, 20].map((count) => <option key={count} value={count}>{count} Entwürfe</option>)}
+              {[3, 5, 10, 15, 20].map((count) => <option key={count} value={count}>{count} Entwürfe</option>)}
             </select>
             <button className="secondary-button" type="button" onClick={generateDrafts} disabled={blocked}>
               <ImageSquare size={15} /> {running ? "Plane…" : "Entwürfe erzeugen und prüfen"}
