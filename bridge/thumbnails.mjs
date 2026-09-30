@@ -199,9 +199,9 @@ export const THUMBNAIL_TEXT_PLACEMENTS = {
  * ~/Movies/YT-OS/thumbnail-research). A draft run spreads its variants over them.
  */
 export const THUMBNAIL_RECIPES = {
-  "icon-halo": { person: true, spec: "Dark studio navy with blurred lights. Chris centred, head about 45 percent of the height, warm toothy smile into the camera, hands folded under the chin, black t-shirt, warm key light, subtle orange rim. Six rounded dark app tiles with terracotta glyphs in an arc left and right at eye level, warm glow. Two-word headline, heavy condensed caps, white, across the bottom." },
+  "icon-halo": { person: true, spec: "Dark studio navy with blurred lights. Chris centred, head about 45 percent of the height, warm toothy smile into the camera, no hands in frame, chest cropped at the bottom edge, black t-shirt, soft key light, subtle rim light. Six rounded dark app tiles with terracotta glyphs in an arc left and right at eye level, warm glow. Two-word headline, heavy condensed caps, white, across the bottom." },
   "terminal-command": { person: true, spec: "Navy background. Chris on the right third, cut by the right edge, head about 55 percent of the height, broad smile, cream hoodie, warm light with orange rim. A white macOS window on the left 65 percent, Claude spark and the word Claude in serif at the top, below a dark terminal bar with one command in glowing light-blue monospace and a cursor. The command is the only text." },
-  "word-behind-head": { person: true, spec: "Full terracotta background (#C8492F) with a soft vignette. Chris centred, chest up, his head covers the middle of one giant word, friendly smile, dark overshirt over a white t-shirt, soft warm studio light. A small Claude lockup (spark plus serif word) on one side at chin height. The giant word is extra-bold condensed caps in cream, about 45 percent of the height, in the upper half, behind Chris." },
+  "word-behind-head": { person: true, spec: "Full terracotta background (#C8492F) with a soft vignette. Chris centred, chest up, his head overlaps only the lower edge of one giant word so every letter stays fully readable, friendly smile, dark overshirt over a white t-shirt, soft warm studio light. A small Claude lockup (spark plus serif word) on one side at chin height. The giant word is extra-bold condensed caps in cream, about 45 percent of the height, in the upper half, behind Chris." },
   "cream-surprise": { person: true, spec: "Flat Anthropic cream (#F6F1EB). Chris centred, head about 45 percent, eyes wide, mouth open in surprise, cream hoodie close to the background. Six white tiles with terracotta outlines and line icons, three left, three right, soft shadow. Headline at the bottom in heavy condensed caps, slate navy, a Claude spark before it and a terracotta underline." },
   "logo-equation": { person: false, spec: "Pure black or very dark grey. No person. Two big rounded app tiles, each about 45 percent of the height: left the Claude spark white on coral with an orange glow, right a second symbol with its own colour glow, a white plus between them. Headline: a short statement with a period, extra-bold sans in sentence case, white, top centre, key word with a white chalk underline." },
   "whiteboard-course": { person: true, spec: "Grey office wall. Chris on the right, head about 50 percent, broad smile, light-blue knit sweater, soft natural light. A whiteboard over 70 percent of the width: at the top a Claude spark and one title word in thick black marker, below a numbered list in two columns, handwritten. Text only on the whiteboard." },
@@ -473,11 +473,11 @@ export function validateThumbnailStage(input) {
  * runs: too pale, face slightly too wide. Only the person stage sends it.
  */
 export const PERSON_LOOK = {
-  skin: "warm, fresh, healthy skin tone with natural colour, never pale or grey",
+  skin: "fresh, healthy skin tone true to the photos, only lightly warm; never orange or over-saturated, never pale or grey",
   contrast: "more contrast and defined light: key light from the front side, gentle shadow on the far cheek",
   face: "face very slightly slimmer (about 3 to 5 percent narrower), defined jawline, as if shot with a longer lens from further away",
   identity: "Chris must stay instantly recognizable as the man in the photos: same face shape, eyes, nose, hairline, hair colour and beard shape.",
-  retouch: "professional magazine-cover retouch: even, warm, healthy skin without shine, clean beard edges, bright clear eyes with catchlights, natural skin texture kept, never plastic",
+  retouch: "professional magazine-cover retouch: even, natural, healthy skin true to the photos without shine, clean beard edges, bright clear eyes with catchlights, natural skin texture kept, never plastic",
 };
 
 /**
@@ -487,9 +487,9 @@ export const PERSON_LOOK = {
 export const PERSON_REFINE = JSON.stringify({
   task: "Edit the image you just generated. Retouch ONLY Chris; keep the backdrop, the object, every word of text, his pose, expression, clothes and the framing exactly as they are.",
   retouch: [
-    "bright, warm, healthy skin with even tone, no redness, no shine, natural texture kept",
+    "bright, natural, healthy skin true to the photos with even tone, no orange cast, no redness, no shine, natural texture kept",
     "a soft rim light along his hair and shoulders that separates him from the backdrop",
-    "brighter, clear eyes with catchlights, tack sharp",
+    "brighter, clear eyes with catchlights, sharp without over-sharpening the skin",
     "face a touch slimmer and more defined at the jawline, clean beard edges",
   ],
   identity: "He stays instantly recognizable. Never change his face shape beyond a subtle refinement.",
@@ -508,6 +508,7 @@ const STAGE_AVOID = {
   person: [
     "a different person than the one in the face photos",
     "pale or grey skin",
+    "orange, over-saturated or over-sharpened skin",
     "flat lighting",
     "wide-angle distortion of the face",
     "any text, letters or numbers",
@@ -644,7 +645,7 @@ function personPrompt(request, variant) {
   const json = {
     task: "Edit: a YouTube thumbnail. Add ONLY Chris, the man in the face photos, to the approved background (image 1).",
     preserve: "Keep the backdrop colour, the object, its position, size, shading and every other detail of image 1 unchanged. Do not change any other aspect of the image.",
-    identity: "Preserve his exact likeness: face, facial features, eyes, nose, hairstyle, beard and proportions from the face photos. The only allowed changes are the look notes below: warmer skin, more contrast, a very slightly slimmer face as with a portrait lens.",
+    identity: "Preserve his exact likeness: face, facial features, eyes, nose, hairstyle, beard and proportions from the face photos. The only allowed changes are the look notes below: fresher natural skin, more contrast, a very slightly slimmer face as with a portrait lens.",
     video: request.video.title,
     canvas: canvasBlock("his face and the key visual"),
     inputImages: {
@@ -736,7 +737,7 @@ function draftPrompt(request, variant) {
             pose: variant.imagePrompt.subject,
             ...(elements?.gesture ? { gesture: THUMBNAIL_GESTURES[elements.gesture] } : {}),
             wardrobe: THUMBNAIL_WARDROBE[elements?.wardrobe ?? DEFAULT_WARDROBE[elements?.backdrop] ?? "hoodie-cream"],
-            framing: "big, chest up, face towards the camera, eyes tack sharp",
+            framing: "big, chest up, face towards the camera, eyes sharp, no hands in the lower-right corner",
             light: "soft studio key light, subtle rim light, colour temperature matched to the backdrop",
             look: PERSON_LOOK,
           },
@@ -813,7 +814,7 @@ export function buildCheckInput(request) {
     "- elementCount: main blocks (the face, the headline block, the object; a logo group or icon row counts as one; a plain backdrop does not count).",
     "- cornerFree: is the lower-right corner (about 15 percent width, 15 percent height) free of face, text and important objects?",
     "- numbersConsistent: do counts in the picture match numbers in the text (e.g. 6 levels shows 6 items)? true if nothing is counted.",
-    request.withPerson ? "- skinOk: warm, healthy, not pale, not plastic?" : "- skinOk: null.",
+    request.withPerson ? "- skinOk: natural and healthy like the photos, not pale, not orange, not over-sharpened, not plastic?" : "- skinOk: null.",
     request.withPerson ? "- faceBigEnough: is the face (brow to chin) at least about 34 percent of the image height?" : "- faceBigEnough: null.",
     request.withPerson ? "- eyeContact: does he look into the camera (a deliberate glance at the object also counts as true)?" : "- eyeContact: null.",
     request.withPerson ? "- textClearOfFace: does no text cover his eyes or mouth (text behind his head is fine)?" : "- textClearOfFace: null.",
