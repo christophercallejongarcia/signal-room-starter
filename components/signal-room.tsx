@@ -40,6 +40,7 @@ import { DiscoverFeed } from "@/components/discover-feed";
 import { YoutubeRadar } from "@/components/youtube-radar";
 import { ThumbnailBuilder } from "@/components/thumbnail-builder";
 import { TAB_PARAM, creatorPath, creatorStats } from "@/lib/creator-detail";
+import { DEFAULT_NETWORK, NETWORK_STORAGE_KEY, deskSearch, ideasForNetwork, networkAfterCapture, parseNetwork, resolveNetwork, type DeskNetwork } from "@/lib/network-view";
 import { rankCorpus, DEMO_NOW, type Ranked } from "@/lib/rank-corpus";
 import { demoCreators, demoHashtagPosts, demoScriptIdeaTitles, demoScripts, demoSignals } from "@/lib/demo-data";
 import { DEMO_SCORING_NOTE } from "@/lib/demo-score";
@@ -178,6 +179,9 @@ const navItems = [
 
 type TabId = (typeof navItems)[number]["id"];
 
+/** Tabs with a YouTube view. The others show Instagram data and say so while YouTube is selected. */
+const YOUTUBE_TABS = new Set<TabId>(["discover", "channels", "ideas", "thumbnails", "profile"]);
+
 function NetworkLabel({ network }: { network: Network }) {
   return <span className="network-label">{networkName(network)}</span>;
 }
@@ -260,7 +264,14 @@ function SignalMedia({ signal, index, threshold }: { signal: Ranked; index: numb
 
 export function SignalRoom() {
   const [activeTab, setActiveTab] = useState<TabId>("discover");
-  const [network, setNetwork] = useState<Network>("instagram");
+  const [network, setNetworkState] = useState<DeskNetwork>(DEFAULT_NETWORK);
+  /** True once tab and network were read from the URL; only then does the URL follow the state. */
+  const [hydrated, setHydrated] = useState(false);
+  /** The desk-wide toggle. Only the desk networks are selectable. */
+  const setNetwork = (next: Network) => {
+    const desk = parseNetwork(next);
+    if (desk) setNetworkState(desk);
+  };
   const [creators, setCreators] = useState<Creator[]>(demoCreators);
   const [signals, setSignals] = useState<SignalRecord[]>(demoSignals);
   const [transcriptDictionary, setTranscriptDictionary] = useState<TranscriptDictionaryEntry[]>([]);
@@ -555,11 +566,32 @@ export function SignalRoom() {
     }
   }
 
-  // The detail page links back with ?tab=channels, so the return lands on the list it came from.
+  // The detail page links back with ?tab=channels&network=youtube, so the return lands on the list it came from.
   useEffect(() => {
-    const wanted = new URLSearchParams(window.location.search).get(TAB_PARAM);
+    const search = window.location.search;
+    const wanted = new URLSearchParams(search).get(TAB_PARAM);
     if (navItems.some((item) => item.id === wanted)) setActiveTab(wanted as TabId);
+    let stored: string | null = null;
+    try {
+      stored = window.localStorage.getItem(NETWORK_STORAGE_KEY);
+    } catch {
+      stored = null;
+    }
+    setNetworkState(resolveNetwork(search, stored));
+    setHydrated(true);
   }, []);
+
+  // Tab and network live in the URL, so a reload or a shared link opens the same view;
+  // the network is also remembered for the next link that carries none.
+  useEffect(() => {
+    if (!hydrated) return;
+    window.history.replaceState(window.history.state, "", deskSearch(window.location.search, activeTab, network));
+    try {
+      window.localStorage.setItem(NETWORK_STORAGE_KEY, network);
+    } catch {
+      // Private mode or a full store: the URL still carries the choice.
+    }
+  }, [hydrated, activeTab, network]);
 
   useEffect(() => {
     loadStore().catch(() => {});
@@ -766,6 +798,8 @@ export function SignalRoom() {
       }
       const { idea } = (await response.json()) as { idea: Idea };
       setIdeas((current) => ({ ...current, items: [idea, ...current.items], phase: "ready" }));
+      // The new Idea has to be visible in Ideas: follow its source's network.
+      setNetworkState(networkAfterCapture(idea, network, signalNetworks));
       setActiveTab("ideas");
     } catch (error) {
       setIdeas((current) => ({ ...current, error: error instanceof Error ? error.message : "The capture failed." }));
@@ -915,11 +949,20 @@ export function SignalRoom() {
     }
   }
 
-  // The Discover counters read the same corpus its cards do: own uploads are not in it.
-  const research = withoutOwned(rankedSignals, creators);
+  // The Discover counters read the same corpus its cards do: own uploads are not in it, and only the selected network.
+  const networkCreators = creators.filter((creator) => creator.network === network);
+  const networkIds = new Set(networkCreators.map((creator) => creator.id));
+  const research = withoutOwned(rankedSignals, creators).filter((signal) => networkIds.has(signal.creatorId));
   const knownVideos = research.length;
   const nowMs = Date.now();
   const newIn48 = research.filter((signal) => isNew(signal.publishedAt, nowMs)).length;
+  const signalNetworks = useMemo(() => {
+    const byCreator = new Map(creators.map((creator) => [creator.id, creator.network]));
+    return new Map(signals.flatMap((signal) => {
+      const origin = byCreator.get(signal.creatorId);
+      return origin ? [[signal.id, origin] as const] : [];
+    }));
+  }, [creators, signals]);
 
   return (
     <div className="app-shell">
@@ -959,13 +1002,25 @@ export function SignalRoom() {
       </header>
 
       <main>
+        <div className="desk-toolbar network-bar">
+          <NetworkToggle network={network} onNetwork={setNetwork} />
+          {activeTab === "discover" && (
+            <div className="toolbar-facts">
+              <span><strong>{knownVideos}</strong> videos</span>
+              <span><strong>{networkCreators.filter((creator) => !isOwned(creator)).length}</strong> channels</span>
+              <span><strong>{research.filter((signal) => signal.coverUrl).length}</strong> visual reads</span>
+              <span>{lastRefresh}</span>
+            </div>
+          )}
+          {network === "youtube" && !YOUTUBE_TABS.has(activeTab) && (
+            <p className="network-hint" role="status"><WarningCircle size={14} /> Dieser Reiter hat noch keine YouTube-Ansicht und zeigt Instagram-Daten.</p>
+          )}
+        </div>
         {activeTab === "discover" && (
           <DiscoverView
             rankedSignals={rankedSignals}
             creators={creators}
             network={network}
-            onNetwork={setNetwork}
-            lastRefresh={lastRefresh}
             stats={{ knownVideos, newIn48 }}
             threshold={threshold}
             onThreshold={setThreshold}
@@ -1016,6 +1071,7 @@ export function SignalRoom() {
             creators={creators}
             rankedSignals={rankedSignals}
             network={network}
+            threshold={threshold}
             onNetwork={setNetwork}
             onAdd={() => setShowAddCreator(true)}
             onToggleForeign={toggleForeign}
@@ -1033,6 +1089,8 @@ export function SignalRoom() {
             onMove={moveIdea}
             onReloadIdeas={loadIdeas}
             scripts={scripts.items}
+            network={network}
+            signalNetworks={signalNetworks}
           />
         )}
         {activeTab === "scripts" && (
@@ -1045,6 +1103,7 @@ export function SignalRoom() {
             covers={covers}
             onGenerate={renderCovers}
             onRecheckBridge={checkBridge}
+            network={network}
           />
         )}
         {activeTab === "hooks" && (
@@ -1059,7 +1118,7 @@ export function SignalRoom() {
             onReload={loadHookRuns}
           />
         )}
-        {activeTab === "profile" && <ProfileView creators={creators} rankedSignals={rankedSignals} runs={runs} runsMonth={runsMonth} runsState={runsState} />}
+        {activeTab === "profile" && <ProfileView creators={creators} rankedSignals={rankedSignals} runs={runs} runsMonth={runsMonth} runsState={runsState} network={network} />}
       </main>
 
       {showAddCreator && <AddCreatorDialog onClose={() => setShowAddCreator(false)} onSubmit={addCreator} state={addState} />}
@@ -1102,8 +1161,6 @@ function DiscoverView({
   rankedSignals,
   creators,
   network,
-  onNetwork,
-  lastRefresh,
   stats,
   threshold,
   onThreshold,
@@ -1115,8 +1172,6 @@ function DiscoverView({
   rankedSignals: Ranked[];
   creators: Creator[];
   network: Network;
-  onNetwork: (network: Network) => void;
-  lastRefresh: string;
   stats: { knownVideos: number; newIn48: number };
   threshold: OutlierThreshold;
   onThreshold: (threshold: OutlierThreshold) => void;
@@ -1168,16 +1223,6 @@ function DiscoverView({
 
   return (
     <div className="view-stack">
-      <div className="desk-toolbar">
-        <NetworkToggle network={network} onNetwork={onNetwork} />
-        <div className="toolbar-facts">
-          <span><strong>{stats.knownVideos}</strong> videos</span>
-          <span><strong>{researchCreators.length}</strong> channels</span>
-          <span><strong>{researchSignals.filter((s) => s.coverUrl).length}</strong> visual reads</span>
-          <span>{lastRefresh}</span>
-        </div>
-      </div>
-
       <section className="hero">
         <div>
           <p className="hero-kicker">Tracked {isIg ? "Instagram" : "AI"} channels / updated daily</p>
@@ -2065,6 +2110,7 @@ function ChannelsView({
   creators,
   rankedSignals,
   network,
+  threshold,
   onNetwork,
   onAdd,
   onToggleForeign,
@@ -2075,6 +2121,7 @@ function ChannelsView({
   creators: Creator[];
   rankedSignals: Ranked[];
   network: Network;
+  threshold: number;
   onNetwork: (network: Network) => void;
   onAdd: () => void;
   /** Flips the foreign-niche mark that splits the Format Signals tab. */
@@ -2167,7 +2214,7 @@ function ChannelsView({
                     <span className="creator-avatar" style={{ background: creator.accent }}>
                       {creator.avatarUrl ? <img src={creator.avatarUrl} alt="" referrerPolicy="no-referrer" /> : creator.name.slice(0, 2).toUpperCase()}
                     </span>
-                    <div><Link className="creator-link strong" href={creatorPath(creator.id, { from: "channels" })}>{creator.name}</Link><small>{creator.handle} · {creator.audience ? `${formatNumber(creator.audience)} ${network === "instagram" ? "followers" : "subs"}` : "Pending"}</small></div>
+                    <div><Link className="creator-link strong" href={creatorPath(creator.id, { from: "channels", threshold })}>{creator.name}</Link><small>{creator.handle} · {creator.audience ? `${formatNumber(creator.audience)} ${network === "instagram" ? "followers" : "subs"}` : "Pending"}</small></div>
                   </div>
                 </td>
                 <td>
@@ -2518,7 +2565,12 @@ function IdeasView({
   onMove,
   onReloadIdeas,
   scripts,
+  network,
+  signalNetworks,
 }: {
+  network: DeskNetwork;
+  /** Signal id to its creator's network: where an Idea came from. */
+  signalNetworks: Map<string, Network>;
   bridge: BridgeHealth;
   ideas: IdeasState;
   onCapture: (input: IdeaInput) => void;
@@ -2531,12 +2583,14 @@ function IdeasView({
   const [goal, setGoal] = useState("");
   /** The stage the list is narrowed to; null shows every idea. */
   const [stage, setStage] = useState<IdeaStatus | null>(null);
-  const counts = countByStage(ideas.items);
-  const visible = stage ? ideas.items.filter((item) => item.status === stage) : ideas.items;
+  // The selected network's Ideas plus every Idea without a source.
+  const pool = ideasForNetwork(ideas.items, network, signalNetworks);
+  const counts = countByStage(pool);
+  const visible = stage ? pool.filter((item) => item.status === stage) : pool;
   const developBlocked = bridge === "offline" || bridge === "logged-out";
   const captureTitle = idea.trim();
   const scriptsByIdea = new Map(scripts.map((script) => [script.ideaId, script]));
-  const developed = ideas.items.filter((item) => scriptsByIdea.has(item.id)).length;
+  const developed = pool.filter((item) => scriptsByIdea.has(item.id)).length;
 
   function capture() {
     onCapture({ title: captureTitle, goal: goal.trim() });
@@ -2550,10 +2604,10 @@ function IdeasView({
         <div>
           <p className="hero-kicker">Idea repository / strategy desk</p>
           <h1>Ideas</h1>
-          <p className="hero-sub">Inbox für neue Ansätze. Erfasse eine Idea, öffne ihr Skriptprojekt oder verwirf sie.</p>
+          <p className="hero-sub">Inbox für neue Ansätze. Erfasse eine Idea, öffne ihr Skriptprojekt oder verwirf sie. Gezeigt werden Ideas aus {network === "youtube" ? "YouTube" : "Instagram"} und alle ohne Quelle.</p>
         </div>
         <div className="stat-blocks">
-          <div><strong>{ideas.items.length}</strong><span>Ideas in der Inbox</span></div>
+          <div><strong>{pool.length}</strong><span>Ideas in der Inbox</span></div>
           <div><strong>{counts.captured}</strong><span>noch nicht entwickelt</span></div>
           <div className="lime"><strong>{developed}</strong><span>script projects</span></div>
         </div>
@@ -2618,10 +2672,10 @@ function IdeasView({
         </div>
         {ideas.phase === "loading" && <div className="empty-state">Reading the ideas table.</div>}
         {ideas.phase === "error" && <div className="empty-state">The ideas table is unreachable.</div>}
-        {ideas.phase === "ready" && ideas.items.length === 0 && (
+        {ideas.phase === "ready" && pool.length === 0 && (
           <div className="empty-state">No idea captured yet. Capture one above, or from a card in Discover.</div>
         )}
-        {ideas.phase === "ready" && ideas.items.length > 0 && visible.length === 0 && stage && (
+        {ideas.phase === "ready" && pool.length > 0 && visible.length === 0 && stage && (
           <div className="empty-state">No idea on {statusCopy[stage]}. Click the chip again to show every idea.</div>
         )}
         {visible.map((item, index) => (
@@ -2705,16 +2759,21 @@ function ThumbnailsView({
   covers,
   onGenerate,
   onRecheckBridge,
+  network,
 }: {
   ideas: Idea[];
   bridge: BridgeHealth;
   covers: CoverState;
   onGenerate: (input: CoverRun) => void;
   onRecheckBridge: () => void;
+  network: DeskNetwork;
 }) {
   const developedIdeas = ideas.filter((idea) => Boolean(idea.storyboard));
   const [selectedId, setSelectedId] = useState("");
-  const [format, setFormat] = useState<CoverFormat>("reel");
+  // The network toggle preselects the cover format; the picker can still switch it.
+  const networkFormat: CoverFormat = network === "youtube" ? "youtube" : "reel";
+  const [format, setFormat] = useState<CoverFormat>(networkFormat);
+  useEffect(() => setFormat(networkFormat), [networkFormat]);
   const [treatment, setTreatment] = useState<CoverTreatment>("faceless");
   const selectedIdea = developedIdeas.find((idea) => idea.id === selectedId) ?? developedIdeas[0];
   const packageCount = ideas.reduce((sum, idea) => sum + (idea.coverBoards?.reduce((boards, board) => boards + board.packages.length, 0) ?? 0), 0);
@@ -2746,7 +2805,7 @@ function ThumbnailsView({
         </div>
       </section>
 
-      <ThumbnailBuilder bridge={bridge} onRecheckBridge={onRecheckBridge} />
+      {network === "youtube" && <ThumbnailBuilder bridge={bridge} onRecheckBridge={onRecheckBridge} />}
 
       <section className="panel glow">
         <div className="panel-head">
@@ -3023,8 +3082,15 @@ function laneStats(reels: Ranked[]) {
   };
 }
 
-function ProfileView({ creators, rankedSignals, runs, runsMonth, runsState }: { creators: Creator[]; rankedSignals: Ranked[]; runs: Run[]; runsMonth: MonthUsage | null; runsState: "loading" | "ready" | "error" }) {
-  const owned = creators.filter(isOwned);
+/** How Profile names things per network. */
+const PROFILE_COPY: Record<DeskNetwork, { audience: string; uploads: string; reach: string; source: string; ranking: string; outlierNote: string }> = {
+  instagram: { audience: "followers", uploads: "Reels", reach: "plays", source: "Apify connector", ranking: "Follower-relative outlier", outlierNote: "The same follower-relative outlier the competitor corpus is read with, so the last own banger is the top row." },
+  youtube: { audience: "subscribers", uploads: "Videos", reach: "views", source: "YouTube Data API", ranking: "Channel-median outlier", outlierNote: "Views over the median of the channel's last 30 long-form videos, the same factor the competitor corpus is read with." },
+};
+
+function ProfileView({ creators, rankedSignals, runs, runsMonth, runsState, network }: { creators: Creator[]; rankedSignals: Ranked[]; runs: Run[]; runsMonth: MonthUsage | null; runsState: "loading" | "ready" | "error"; network: DeskNetwork }) {
+  const copy = PROFILE_COPY[network];
+  const owned = creators.filter(isOwned).filter((creator) => creator.network === network);
   const ownedIds = new Set(owned.map((c) => c.id));
   const nowMs = Date.now();
   // Outlier first: the question this tab answers is which own format last caught fire.
@@ -3044,9 +3110,9 @@ function ProfileView({ creators, rankedSignals, runs, runsMonth, runsState }: { 
           <p className="hero-sub">Your own lanes, tracked with the same outlier math as the competitor corpus. Find the last banger, then work out what made it one.</p>
         </div>
         <div className="stat-blocks">
-          <div><strong>{formatNumber(followers)}</strong><span>followers</span></div>
+          <div><strong>{formatNumber(followers)}</strong><span>{copy.audience}</span></div>
           <div><strong>{all.count}</strong><span>videos tracked</span></div>
-          <div><strong>{all.count ? formatNumber(all.averagePlays) : "—"}</strong><span>average plays</span></div>
+          <div><strong>{all.count ? formatNumber(all.averagePlays) : "—"}</strong><span>average {copy.reach}</span></div>
           <div className="lime"><strong>{formatOutlier(all.bestOutlier)}</strong><span>strongest outlier</span></div>
         </div>
       </section>
@@ -3058,15 +3124,15 @@ function ProfileView({ creators, rankedSignals, runs, runsMonth, runsState }: { 
       </section>
 
       <div className="settings-grid">
-        <div><span>Data source</span><strong>Apify connector</strong></div>
-        <div><span>Ranking method</span><strong>Follower-relative outlier</strong></div>
+        <div><span>Data source</span><strong>{copy.source}</strong></div>
+        <div><span>Ranking method</span><strong>{copy.ranking}</strong></div>
         <div><span>Tracked channels</span><strong>{creators.length}</strong></div>
         <div><span>Strategy bridge</span><strong>Local and optional</strong></div>
       </div>
 
-      <div className="section-head"><div><p className="kicker">Own accounts</p><h2>Owned lanes</h2></div><p className="note">Followers, average plays and the strongest outlier per own account. Mark a handle as your own under Tracked Channels to add a lane.</p></div>
+      <div className="section-head"><div><p className="kicker">Own accounts</p><h2>Owned lanes</h2></div><p className="note">{copy.audience[0].toUpperCase() + copy.audience.slice(1)}, average {copy.reach} and the strongest outlier per own account. Mark a handle as your own under Tracked Channels to add a lane.</p></div>
       <table className="desk-table">
-        <thead><tr><th>Account</th><th className="right">Followers</th><th className="right">Reels</th><th className="right">Ø plays</th><th className="right">Best outlier</th></tr></thead>
+        <thead><tr><th>Account</th><th className="right">{copy.audience[0].toUpperCase() + copy.audience.slice(1)}</th><th className="right">{copy.uploads}</th><th className="right">Ø {copy.reach}</th><th className="right">Best outlier</th></tr></thead>
         <tbody>
           {lanes.map(({ creator, count, averagePlays, bestOutlier }) => (
             <tr key={creator.id}>
@@ -3088,13 +3154,13 @@ function ProfileView({ creators, rankedSignals, runs, runsMonth, runsState }: { 
         </tbody>
       </table>
 
-      <div className="section-head"><div><p className="kicker">Own performance</p><h2>Every owned upload, strongest first</h2></div><p className="note">The same follower-relative outlier the competitor corpus is read with, so the last own banger is the top row.</p></div>
+      <div className="section-head"><div><p className="kicker">Own performance</p><h2>Every owned upload, strongest first</h2></div><p className="note">{copy.outlierNote}</p></div>
       <table className="desk-table">
-        <thead><tr><th>Video</th><th className="hide-sm">Published</th><th className="right">Plays</th><th className="right">Outlier</th></tr></thead>
+        <thead><tr><th>Video</th><th className="hide-sm">Published</th><th className="right">{copy.reach[0].toUpperCase() + copy.reach.slice(1)}</th><th className="right">Outlier</th></tr></thead>
         <tbody>
           {mine.map((signal) => (
             <tr key={signal.id}>
-              <td><div className="thumb-cell">{signal.coverUrl ? <img className="mini" src={signal.coverUrl} alt="" /> : <span className="mini" />}<div><strong>{signal.title}</strong><small>{signal.format ?? "video"}</small></div></div></td>
+              <td><div className="thumb-cell">{signal.coverUrl ?? signal.thumbnailUrl ? <img className="mini" src={signal.coverUrl ?? signal.thumbnailUrl} alt="" referrerPolicy="no-referrer" /> : <span className="mini" />}<div><strong>{signal.title}</strong><small>{signal.format ?? "video"}</small></div></div></td>
               <td className="hide-sm muted">{timeAgo(signal.publishedAt, nowMs)}</td>
               <td className="right num">{formatNumber(signal.plays ?? signal.views)}</td>
               <td className="right lime">{(signal.outlier ?? 0).toFixed(2)}x</td>

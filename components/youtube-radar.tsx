@@ -328,7 +328,7 @@ export function YoutubeRadar({
                 <td className="right">
                   <div className="controls">
                     {candidate.decision === "accepted" ? (
-                      candidate.creatorId ? <Link className="ghost-button" href={creatorPath(candidate.creatorId, { from: "discover" })}><CheckCircle size={13} weight="fill" /> In der Watchlist</Link> : <span className="status-chip"><CheckCircle size={13} weight="fill" /> In der Watchlist</span>
+                      candidate.creatorId ? <Link className="ghost-button" href={creatorPath(candidate.creatorId, { from: "discover", threshold })}><CheckCircle size={13} weight="fill" /> In der Watchlist</Link> : <span className="status-chip"><CheckCircle size={13} weight="fill" /> In der Watchlist</span>
                     ) : (
                       <>
                         <button className="primary-button" type="button" disabled={Boolean(pending)} onClick={() => accept(candidate)}>
