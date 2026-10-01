@@ -26,3 +26,17 @@ Stand 30.09.2026. Ausgewertet: alle 45 markierten Thumbnails der Referenz-Biblio
 ## Wie die Bibliothek in den Builder kommt
 
 Ein Lauf schickt höchstens 8 markierte Vorlagen an den Planer, jedes einzelne Bild sieht davon 2 als Stilvorlage (das Bild-Tool nimmt höchstens 5 Eingabebilder, 3 davon sind Chris' Fotos). Die übrigen Vorlagen wirken über die Rezepte, deshalb stehen die Muster als Text im Builder.
+
+## Versuchs-Optionen für Entwurfs-Läufe (01.10.)
+
+`POST /api/youtube/thumbnails/drafts` nimmt zusätzlich:
+
+| Feld | Wirkung |
+|---|---|
+| `textMode: "code"` | Das Bild bleibt ohne Schrift, die Fläche bleibt frei. Die Überschrift setzt danach `node scripts/thumbnail-text.mjs <bild> <ziel> <spec.json>` mit Anton oder Archivo Black (`assets/fonts`, OFL). Positionen und Größen in der Spec sind Bildanteile |
+| `promptFormat: "json"` oder `"prose"` | Der Prompt geht wörtlich ans Bild-Tool, als JSON oder mit gleichem Inhalt als Fließtext. Ohne das Feld formuliert Codex den Prompt aus dem JSON |
+| `styleFromReference: true` | Der Entwurf übernimmt das Stil-JSON der ersten Vorlage in `inspiredBy`, falls sie eins hat |
+
+Stil-JSON einer Vorlage erzeugen: `POST /api/youtube/thumbnails/library/style` mit `{ videoId }`. Codex beschreibt das Thumbnail in 15 Feldern (Licht, Farben, Kamera, Objektiv, Komposition, Schatten, Hintergrund, Textur, Nachbearbeitung, Stimmung, Person, Objekt, Typografie, Prompt, Negativ-Prompt), das Ergebnis bleibt an der Vorlage in der Bibliothek.
+
+Ergebnis der ersten Versuchsreihe: Das Format JSON oder Fließtext macht keinen sichtbaren Unterschied, das Stil-JSON aus Vorlagen schon. Bekannte Lücke: Es gibt keinen Verlauf als Hintergrund, der Planer weicht auf `split` aus und teilt das Bild in Schwarz und Weiß.
