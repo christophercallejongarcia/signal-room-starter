@@ -21,6 +21,7 @@ import {
   Shapes,
   Sparkle,
   TextAa,
+  TextT,
   TrendUp,
   UserCircle,
   WarningCircle,
@@ -38,6 +39,7 @@ import { CoverImage, formatNumber, formatOutlier, networkName, timeAgo } from "@
 import { ReelDetailPanel, TranscriptStatusBadge } from "@/components/reel-detail";
 import { DiscoverFeed } from "@/components/discover-feed";
 import { YoutubeRadar } from "@/components/youtube-radar";
+import { TitleBuilder } from "@/components/title-builder";
 import { TAB_PARAM, creatorPath, creatorStats } from "@/lib/creator-detail";
 import { DEFAULT_NETWORK, NETWORK_STORAGE_KEY, deskSearch, ideasForNetwork, networkAfterCapture, parseNetwork, resolveNetwork, type DeskNetwork } from "@/lib/network-view";
 import { rankCorpus, DEMO_NOW, type Ranked } from "@/lib/rank-corpus";
@@ -173,13 +175,14 @@ const navItems = [
   { id: "scripts", label: "Scripts", icon: FileText },
   { id: "thumbnails", label: "Cover Lab", icon: ImageSquare },
   { id: "hooks", label: "Hooks", icon: TextAa },
+  { id: "titles", label: "Titel", icon: TextT },
   { id: "profile", label: "Profile", icon: UserCircle },
 ] as const;
 
 type TabId = (typeof navItems)[number]["id"];
 
 /** Tabs with a YouTube view. The others show Instagram data and say so while YouTube is selected. */
-const YOUTUBE_TABS = new Set<TabId>(["discover", "channels", "ideas", "thumbnails", "profile"]);
+const YOUTUBE_TABS = new Set<TabId>(["discover", "channels", "ideas", "thumbnails", "titles", "profile"]);
 
 function NetworkLabel({ network }: { network: Network }) {
   return <span className="network-label">{networkName(network)}</span>;
@@ -1117,6 +1120,7 @@ export function SignalRoom() {
             onReload={loadHookRuns}
           />
         )}
+        {activeTab === "titles" && <TitleBuilder bridge={bridge} onRecheckBridge={checkBridge} />}
         {activeTab === "profile" && <ProfileView creators={creators} rankedSignals={rankedSignals} runs={runs} runsMonth={runsMonth} runsState={runsState} network={network} />}
       </main>
 
