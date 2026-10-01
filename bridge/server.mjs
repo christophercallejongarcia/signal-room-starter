@@ -1,6 +1,6 @@
 import http from "node:http";
 import { Codex } from "@openai/codex-sdk";
-import { codexAuthState } from "./auth.mjs";
+import { codexAuthState, codexPathOverride } from "./auth.mjs";
 import { renderCoverWithCodex } from "./image.mjs";
 import { COVER_FORMATS } from "../lib/cover-formats.mjs";
 import {
@@ -8,6 +8,23 @@ import {
   transcriptAnalysisOutputSchema,
   validateTranscriptAnalysisRequest,
 } from "./transcript-analysis.mjs";
+import {
+  assertImageFiles,
+  buildCheckInput,
+  buildStyleInput,
+  styleOutputSchema,
+  validateStyleRequest,
+  checkOutputSchema,
+  validateCheckRequest,
+  buildThumbnailImageInput,
+  buildThumbnailPlanInput,
+  normalizeThumbnailPlan,
+  normalizeThumbnailVariant,
+  thumbnailPlanOutputSchema,
+  validateFaces,
+  validateThumbnailRequest,
+  validateThumbnailStage,
+} from "./thumbnails.mjs";
 import { buildTitlesPrompt, titlesOutputSchema, validateTitlesRequest } from "./titles.mjs";
 import { buildPatternDiscoveryPrompt, patternEvaluationOutputSchema, patternHypothesisOutputSchema, validatePatternDiscoveryRequest } from "./pattern-discovery.mjs";
 import {
@@ -92,17 +109,17 @@ async function readJson(request) {
 }
 
 function createCodex() {
-  return new Codex();
+  return new Codex(codexPathOverride());
 }
 
-/** One Codex turn under the read-only sandbox. The routes differ only in prompt and schema. */
-async function runCodex(prompt, outputSchema) {
+/** One Codex turn under the read-only sandbox. The routes differ only in prompt (text or text plus images) and schema. */
+async function runCodex(prompt, outputSchema, timeoutMs = 120_000) {
   if (codexAuthState() === "logged-out") {
     throw Object.assign(new Error("Codex is not logged in. Run `codex login` in a terminal."), { status: 503 });
   }
   const codex = createCodex();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const thread = codex.startThread({
@@ -253,21 +270,77 @@ const routes = new Map([
       failure: "The local Codex cover run failed.",
       run: async (input) => {
         const request = validateCoverRequest(input);
+        // "face" renders Chris from his real stills; the app sends them, never a random face.
+        const faces = request.treatment === "face" ? validateFaces(input.faces, { required: true }).map((face) => face.path) : [];
+        await assertImageFiles(faces);
         const descriptions = normalizeCoverPackages(
           await runCodex(buildCoverPrompt(request), coverOutputSchema(request.count)),
           request,
         );
-        const packages = [];
-        for (const description of descriptions) {
-          const image = await renderCoverWithCodex(buildCoverImagePrompt(request, description));
-          packages.push({ ...description, image });
-        }
+        // Parallel: three sequential renders outlast the app's five-minute fetch window.
+        const packages = await Promise.all(descriptions.map(async (description) => ({
+          ...description,
+          image: await renderCoverWithCodex(buildCoverImagePrompt(request, description), faces),
+        })));
         return {
           format: request.format,
           aspectRatio: COVER_FORMATS[request.format].aspectRatio,
           treatment: request.treatment,
           packages,
         };
+      },
+    },
+  ],
+  [
+    "/v1/thumbnails/plan",
+    {
+      label: "Thumbnail plan",
+      failure: "The local Codex thumbnail plan failed.",
+      run: async (input) => {
+        const request = validateThumbnailRequest(input);
+        await assertImageFiles(request.references.map((reference) => reference.path));
+        // A draft run plans up to 20 variants; stay inside the app's five-minute fetch window.
+        const timeout = request.drafts ? 280_000 : 120_000;
+        return { variants: normalizeThumbnailPlan(await runCodex(buildThumbnailPlanInput(request), thumbnailPlanOutputSchema(request), timeout), request) };
+      },
+    },
+  ],
+  [
+    "/v1/thumbnails/render",
+    {
+      label: "Thumbnail render",
+      failure: "The local Codex thumbnail render failed.",
+      run: async (input) => {
+        const { stage, base } = validateThumbnailStage(input);
+        const request = { ...validateThumbnailRequest(input), ...(base ? { base } : {}) };
+        const variant = normalizeThumbnailVariant(input.variant, request, 0);
+        const render = buildThumbnailImageInput(request, variant, stage);
+        await assertImageFiles(render.images);
+        return { image: await renderCoverWithCodex(render.text, render.images, render.refine ? { refine: render.refine } : {}) };
+      },
+    },
+  ],
+  [
+    "/v1/thumbnails/style",
+    {
+      label: "Thumbnail style",
+      failure: "The local Codex style decomposition failed.",
+      run: async (input) => {
+        const request = validateStyleRequest(input);
+        await assertImageFiles([request.image]);
+        return { style: await runCodex(buildStyleInput(request), styleOutputSchema) };
+      },
+    },
+  ],
+  [
+    "/v1/thumbnails/check",
+    {
+      label: "Thumbnail check",
+      failure: "The local Codex thumbnail check failed.",
+      run: async (input) => {
+        const request = validateCheckRequest(input);
+        await assertImageFiles([request.image, ...request.faces.map((face) => face.path)]);
+        return { check: await runCodex(buildCheckInput(request), checkOutputSchema) };
       },
     },
   ],

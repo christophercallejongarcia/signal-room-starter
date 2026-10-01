@@ -10,6 +10,8 @@ import {
   type CoverResponsePackage,
 } from "./cover-lab.ts";
 import { coverAssetUrl, writeGeneratedCover } from "./adapters/storage/cover-lab-cache.ts";
+import { cropPngToRatio } from "./cover-crop.ts";
+import { loadFaceReferences, type FaceReference } from "./face-references.ts";
 
 type CoverStorage = Pick<StorageAdapter, "getIdea" | "saveIdeaCover">;
 
@@ -56,12 +58,24 @@ function bridgePackage(pkg: CoverPackage) {
   };
 }
 
+/** "face" means Chris from his real stills (SIGNAL_ROOM_FACE_DIR), never an invented face. */
+async function faceStills(request: CoverRequest): Promise<FaceReference[]> {
+  if (request.treatment !== "face") return [];
+  const faces = await loadFaceReferences().catch((error: unknown) => {
+    throw new CoverRunError(error instanceof Error ? error.message : "Face stills cannot be read.", 409);
+  });
+  if (faces.length === 0) throw new CoverRunError("No face stills configured. Set SIGNAL_ROOM_FACE_DIR in .env.local or pick Faceless.", 409);
+  return faces;
+}
+
 async function callBridge(request: CoverRequest, idea: Idea, existing: CoverPackage | undefined) {
+  const faces = await faceStills(request);
   const body = {
     format: request.format,
     treatment: request.treatment,
     idea: bridgeIdea(idea),
     ...(existing ? { package: bridgePackage(existing) } : {}),
+    ...(faces.length > 0 ? { faces } : {}),
   };
   let response: Response;
   try {
@@ -91,7 +105,9 @@ async function persistPackages(
 ): Promise<CoverPackage[]> {
   const persisted: CoverPackage[] = [];
   for (const pkg of packages) {
-    const bytes = Buffer.from(pkg.image.data, "base64");
+    const raw = Buffer.from(pkg.image.data, "base64");
+    // GPT Image renders 3:2; the YouTube slot keeps the centred 16:9 band.
+    const bytes = request.format === "youtube" && pkg.image.mimeType === "image/png" ? cropPngToRatio(raw, 16, 9).bytes : raw;
     const saved = await writeGeneratedCover(request.ideaId, request.format, pkg.id, bytes);
     persisted.push({
       id: pkg.id,
