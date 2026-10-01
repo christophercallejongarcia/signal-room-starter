@@ -100,7 +100,11 @@ export async function runThumbnailDrafts(body: unknown, deps: DraftDeps = {}): P
   const requested = (body as { recipes?: unknown } | null)?.recipes;
   const recipes = Array.isArray(requested) ? requested.filter((id): id is string => typeof id === "string" && DRAFT_RECIPE_ORDER.includes(id)) : [];
   // Optional: the image stays free of text, the headline is set afterwards in code (scripts/thumbnail-text.mjs).
-  const textByCode = (body as { textMode?: unknown } | null)?.textMode === "code";
+  const options = body as { textMode?: unknown; promptFormat?: unknown; styleFromReference?: unknown } | null;
+  const textByCode = options?.textMode === "code";
+  // Optional experiments: the prompt goes verbatim to the image tool as JSON or prose; a decomposed reference style is applied.
+  const promptFormat = options?.promptFormat === "json" || options?.promptFormat === "prose" ? options.promptFormat : undefined;
+  const styleFromReference = options?.styleFromReference === true;
   const now = deps.now ?? (() => new Date());
   const bridge = deps.bridge ?? callBridge;
   const dir = deps.dir;
@@ -122,6 +126,8 @@ export async function runThumbnailDrafts(body: unknown, deps: DraftDeps = {}): P
     ...(rules ? { rules: rules.text } : {}),
     ...(request.direction ? { direction: request.direction } : {}),
     ...(textByCode ? { textByCode: true } : {}),
+    ...(promptFormat ? { promptFormat } : {}),
+    ...(styleFromReference ? { styleFromReference: true } : {}),
   };
 
   // One planning call for 20 variants outlasts the Bridge's window; chunks of five plan in parallel, each with its own recipes.
@@ -147,6 +153,8 @@ export async function runThumbnailDrafts(body: unknown, deps: DraftDeps = {}): P
     ...(request.direction ? { direction: request.direction } : {}),
     aspectRatio: "16:9",
     ...(textByCode ? { textMode: "code" as const } : {}),
+    ...(promptFormat ? { promptFormat } : {}),
+    ...(styleFromReference ? { styleFromReference: true } : {}),
     createdAt: started.toISOString(),
     referenceIds: ready.map((reference) => reference.id),
     faceCount: faces.length,
@@ -246,6 +254,14 @@ export async function rerenderThumbnailDraft(body: unknown, deps: DraftDeps = {}
     markedAt: run.createdAt,
     ...(source.source === "manual" ? { source: "manual" as const } : {}),
   }));
+  // The decomposed styles live in the library, not in the run.
+  if (run.styleFromReference) {
+    const library = await store.readLibrary({ dir });
+    for (const reference of references) {
+      const styleJson = library.references.find((entry) => entry.videoId === reference.videoId)?.styleJson;
+      if (styleJson) reference.styleJson = styleJson;
+    }
+  }
   const ready = await bridgeReferences(references, deps.cacheReference ?? ((reference) => store.cacheReferenceImage(reference, { dir })));
   const rules = await (deps.rules ?? (() => loadThumbnailRules()))();
   const pending = await withRunLock(runId, async () => {
@@ -255,7 +271,12 @@ export async function rerenderThumbnailDraft(body: unknown, deps: DraftDeps = {}
     await store.saveRun(next, { dir });
     return next;
   });
-  const rendering = renderDraft(runId, variantId, { video: { title: run.title }, references: ready, faces, ...(run.textMode === "code" ? { textByCode: true } : {}) }, deps, rules?.text);
+  const options = {
+    ...(run.textMode === "code" ? { textByCode: true } : {}),
+    ...(run.promptFormat ? { promptFormat: run.promptFormat } : {}),
+    ...(run.styleFromReference ? { styleFromReference: true } : {}),
+  };
+  const rendering = renderDraft(runId, variantId, { video: { title: run.title }, references: ready, faces, ...options }, deps, rules?.text);
   if (deps.inline) {
     await rendering;
     return readRunOrFail(runId, dir);
@@ -283,4 +304,24 @@ export async function rateThumbnailDraft(body: unknown, deps: Pick<ThumbnailRunD
     await store.saveRun(next, { dir: deps.dir });
     return next;
   });
+}
+
+/**
+ * Darko's reverse step: Codex decomposes one library thumbnail into its visual
+ * language once; the result stays with the reference ({ videoId }).
+ */
+export async function decomposeReferenceStyle(body: unknown, deps: Pick<ThumbnailRunDeps, "dir" | "bridge" | "now" | "cacheReference"> = {}) {
+  const videoId = (body as { videoId?: unknown } | null)?.videoId;
+  const dir = deps.dir;
+  const library = await store.readLibrary({ dir });
+  const reference = library.references.find((entry) => entry.videoId === videoId);
+  if (!reference) throw new ThumbnailRunError("videoId is not in the reference library.", 404);
+  const image = await (deps.cacheReference ?? ((entry) => store.cacheReferenceImage(entry, { dir })))(reference);
+  const answer = await (deps.bridge ?? callBridge)("style", { image }) as { style?: Record<string, string> };
+  if (!answer.style || typeof answer.style !== "object") throw new ThumbnailRunError("The bridge returned no style.", 502);
+  const styleJsonAt = (deps.now ?? (() => new Date()))().toISOString();
+  const current = await store.readLibrary({ dir });
+  const references = current.references.map((entry) => (entry.videoId === reference.videoId ? { ...entry, styleJson: answer.style, styleJsonAt } : entry));
+  await store.writeLibrary({ references }, { dir });
+  return references.find((entry) => entry.videoId === reference.videoId);
 }

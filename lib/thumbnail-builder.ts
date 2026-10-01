@@ -201,6 +201,10 @@ export type ThumbnailRun = {
   aspectRatio: "16:9";
   /** "code": the drafts stay free of text, the headline is set afterwards with a real font. */
   textMode?: "code";
+  /** Prompt sent verbatim to the image tool as "json" or "prose"; missing means Codex words it from the JSON. */
+  promptFormat?: "json" | "prose";
+  /** The drafts apply the decomposed style of their first inspiring reference. */
+  styleFromReference?: boolean;
   createdAt: string;
   referenceIds: string[];
   faceCount: number;

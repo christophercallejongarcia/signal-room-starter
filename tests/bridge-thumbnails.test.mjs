@@ -294,6 +294,12 @@ test("a draft run asks for many variants with a recipe each and renders one fini
   assert.equal(coded.prompt.text.content, undefined, "text set in code: the image model gets no headline");
   assert.ok(coded.prompt.avoid.includes("any text, letters, numbers or words, also on objects"));
   assert.match(buildCheckInput(validateCheckRequest({ image: "/tmp/x.png", textOverlay: "Wo stehst du?", textByCode: true }))[0].text, /WITHOUT text/);
+  const prose = buildThumbnailImageInput({ ...request(), promptFormat: "prose" }, person, "draft");
+  assert.match(prose.text, /Pass it verbatim/);
+  assert.equal(prose.text.includes('"task"'), false, "prose carries the same content without JSON keys");
+  assert.ok(prose.text.includes(person.textOverlay));
+  const styled = { ...request(), styleFromReference: true, references: request().references.map((reference) => ({ ...reference, styleJson: { lighting: "soft top light" } })) };
+  assert.equal(buildThumbnailImageInput(styled, person, "draft").prompt.styleFromReference.style.lighting, "soft top light");
   const [faceless] = normalizeThumbnailPlan({ variants: Array.from({ length: 20 }, () => withRecipe("logo-equation", "no-person")) }, drafts);
   const facelessRender = buildThumbnailImageInput(request(), faceless, "draft");
   assert.equal(facelessRender.prompt.person, "No person, no face, no hands.");

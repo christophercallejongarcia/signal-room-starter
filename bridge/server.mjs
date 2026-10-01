@@ -11,6 +11,9 @@ import {
 import {
   assertImageFiles,
   buildCheckInput,
+  buildStyleInput,
+  styleOutputSchema,
+  validateStyleRequest,
   checkOutputSchema,
   validateCheckRequest,
   buildThumbnailImageInput,
@@ -301,6 +304,18 @@ const routes = new Map([
         const render = buildThumbnailImageInput(request, variant, stage);
         await assertImageFiles(render.images);
         return { image: await renderCoverWithCodex(render.text, render.images, render.refine ? { refine: render.refine } : {}) };
+      },
+    },
+  ],
+  [
+    "/v1/thumbnails/style",
+    {
+      label: "Thumbnail style",
+      failure: "The local Codex style decomposition failed.",
+      run: async (input) => {
+        const request = validateStyleRequest(input);
+        await assertImageFiles([request.image]);
+        return { style: await runCodex(buildStyleInput(request), styleOutputSchema) };
       },
     },
   ],

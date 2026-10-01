@@ -27,6 +27,9 @@ export type ThumbnailReference = {
   source?: "outlier" | "manual";
   /** Chris' one sentence on what he likes about it. Goes to the planner. */
   note?: string;
+  /** The thumbnail decomposed into its visual language (lighting, colors, lens ...), applied to Chris' topic on request. */
+  styleJson?: Record<string, string>;
+  styleJsonAt?: string;
 };
 
 export type ThumbnailLibrary = { references: ThumbnailReference[] };

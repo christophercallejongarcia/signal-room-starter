@@ -52,8 +52,10 @@ export class ThumbnailRunError extends Error {
   }
 }
 
-export type BridgeReference = { id: string; title: string; channelTitle: string; factor: number; views: number; source?: "manual"; note?: string; path: string };
-export type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[]; rules?: string; direction?: string; textByCode?: boolean };
+export type BridgeReference = { id: string; title: string; channelTitle: string; factor: number; views: number; source?: "manual"; note?: string; styleJson?: Record<string, string>; path: string };
+/** Draft options: textByCode keeps the image free of text; promptFormat sends the prompt verbatim as JSON or prose; styleFromReference applies a decomposed reference style. */
+export type DraftOptions = { textByCode?: boolean; promptFormat?: "json" | "prose"; styleFromReference?: boolean };
+export type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[]; rules?: string; direction?: string } & DraftOptions;
 
 /** Chris' thumbnail playbook, short form, sent to the planner as binding rules. */
 export const THUMBNAIL_RULES_MAX = 8_000;
@@ -74,14 +76,14 @@ export async function loadThumbnailRules(env: Record<string, string | undefined>
 export type ThumbnailRunDeps = {
   faces?: () => Promise<FaceReference[]>;
   rules?: () => Promise<{ text: string; source: string } | undefined>;
-  bridge?: (route: "plan" | "render" | "check", body: unknown) => Promise<unknown>;
+  bridge?: (route: "plan" | "render" | "check" | "style", body: unknown) => Promise<unknown>;
   cacheReference?: (reference: ThumbnailReference) => Promise<string>;
   now?: () => Date;
   /** Store root; tests point it at a temp folder. */
   dir?: string;
 };
 
-export async function callBridge(route: "plan" | "render" | "check", body: unknown) {
+export async function callBridge(route: "plan" | "render" | "check" | "style", body: unknown) {
   let response: Response;
   try {
     response = await fetch(`${STRATEGY_BRIDGE_URL}/v1/thumbnails/${route}`, {
@@ -126,6 +128,7 @@ export async function bridgeReferences(references: ThumbnailReference[], cache: 
     views: reference.views,
     ...(reference.source === "manual" ? { source: "manual" as const } : {}),
     ...(reference.note ? { note: reference.note } : {}),
+    ...(reference.styleJson ? { styleJson: reference.styleJson } : {}),
     path: await cache(reference),
   })));
   const ready = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
