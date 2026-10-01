@@ -102,6 +102,7 @@ export function validateThumbnailRequest(input) {
     ...(rules ? { rules } : {}),
     ...(direction ? { direction } : {}),
     ...(input.drafts === true ? { drafts: true, recipes: draftRecipes(input.recipes) } : {}),
+    ...(input.textByCode === true ? { textByCode: true } : {}),
     count: input.drafts === true ? draftCount(input.count) : VARIANT_COUNT,
   };
 }
@@ -363,6 +364,7 @@ export function buildThumbnailPlanInput(request) {
     "Pick layout, backdrop, object.kind, textStyle and textPlacement from their enums. object.description names the one object concretely and visually: icons, symbols, a device, a single short command like /goal, or a number. The object carries no sentence and never competes with the headline; the headline is the only real text. Make the object big and instantly recognizable at phone size. Count the elements before answering: Chris, the headline, the one object.",
     ...(request.drafts
       ? [
+          ...(request.textByCode ? ["The headline is set afterwards in code with a real typeface. Still plan textOverlay and where it goes, but the image itself must stay free of any text, letters or numbers; keep that area as calm, empty backdrop."] : []),
           `This is a draft run: Chris wants to test many directions. Spread the ${request.count} variants over the recipes below, name the recipe of each variant in recipe and use every listed recipe at least once${request.recipes.includes("abo-comparison") && request.count > request.recipes.length ? ", abo-comparison at least twice" : ""}. Follow the recipe's spec closely but adapt object and headline to this video. Recipes marked without person use layout no-person; all others show Chris big, looking into the camera, laughing or surprised. Mix the emotional hooks: a concrete result, a curiosity gap, a bold claim, a strong reaction.`,
           "Recipes:",
           ...request.recipes.map((id) => `- ${id}${THUMBNAIL_RECIPES[id].person ? "" : " (without person)"}: ${THUMBNAIL_RECIPES[id].spec}`),
@@ -760,20 +762,25 @@ function draftPrompt(request, variant) {
           },
         }
       : { person: "No person, no face, no hands." }),
-    text: {
-      content: variant.textOverlay,
-      rule: "Include ONLY this headline text (verbatim), rendered exactly once, clearly and legibly, spelled exactly as given including umlauts. Words that belong to the object itself (a command, a label) stay minimal. No watermarks, no unrelated logos.",
-      ...(elements ? { typeface: THUMBNAIL_TEXT_STYLES[elements.textStyle], position: THUMBNAIL_TEXT_PLACEMENTS[elements.textPlacement] } : {}),
-      placement: variant.imagePrompt.text.placement,
-      style: variant.imagePrompt.text.style,
-    },
+    text: request.textByCode
+      ? {
+          rule: "NO text anywhere in the image: no headline, no letters, no numbers, no labels on objects. The headline is added afterwards in code. Keep its area as calm, empty backdrop with nothing important in it.",
+          keepEmpty: elements ? THUMBNAIL_TEXT_PLACEMENTS[elements.textPlacement] : variant.imagePrompt.text.placement,
+        }
+      : {
+          content: variant.textOverlay,
+          rule: "Include ONLY this headline text (verbatim), rendered exactly once, clearly and legibly, spelled exactly as given including umlauts. Words that belong to the object itself (a command, a label) stay minimal. No watermarks, no unrelated logos.",
+          ...(elements ? { typeface: THUMBNAIL_TEXT_STYLES[elements.textStyle], position: THUMBNAIL_TEXT_PLACEMENTS[elements.textPlacement] } : {}),
+          placement: variant.imagePrompt.text.placement,
+          style: variant.imagePrompt.text.style,
+        },
     inputImages: {
       ...(faces.length ? { face: `${faceRange}: reference photos of Chris.` } : {}),
       ...(styles.length ? { style: `${styleRange}: thumbnails Chris likes, style reference only. Never copy their people or text.` } : {}),
     },
     styleNotes: variant.imagePrompt.styleNotes,
     finish: "A polished creator thumbnail with a sharp headline and object and natural, not over-sharpened skin, readable on a phone at 160 px wide, maximum three focus areas. The headline contrasts strongly with the backdrop: dark or coral text on light backdrops, white or coral on dark ones.",
-    avoid: [...BASE_AVOID, ...FORMULA_AVOID.filter((item) => item !== "more than one object"), ...(withPerson ? STAGE_AVOID.person.filter((item) => !/text|background/.test(item)) : []), ...variant.imagePrompt.avoid],
+    avoid: [...BASE_AVOID, ...FORMULA_AVOID.filter((item) => item !== "more than one object"), ...(withPerson ? STAGE_AVOID.person.filter((item) => !/text|background/.test(item)) : []), ...(request.textByCode ? ["any text, letters, numbers or words, also on objects"] : []), ...variant.imagePrompt.avoid],
   };
   return {
     json,
@@ -791,7 +798,7 @@ export function validateCheckRequest(input) {
   if (!textOverlay) throw new Error("textOverlay is required.");
   const idea = cleanString(input.idea, MAX_LINE);
   const rules = cleanBlock(input.rules, MAX_RULES);
-  return { image, faces, textOverlay, withPerson: input.withPerson !== false, ...(idea ? { idea } : {}), ...(rules ? { rules } : {}) };
+  return { image, faces, textOverlay, withPerson: input.withPerson !== false, ...(input.textByCode === true ? { textByCode: true } : {}), ...(idea ? { idea } : {}), ...(rules ? { rules } : {}) };
 }
 
 export const checkOutputSchema = {
@@ -820,7 +827,9 @@ export function buildCheckInput(request) {
   const text = [
     "You are a strict YouTube thumbnail reviewer for Chris' German channel about Claude, AI agents and AI operating systems. Do not browse, run commands or edit files.",
     "Image 1 is a thumbnail draft." + (request.faces.length ? ` Images 2-${request.faces.length + 1} are reference photos of Chris.` : ""),
-    `The headline must read exactly: "${request.textOverlay}".`,
+    request.textByCode
+      ? `This draft is rendered WITHOUT text on purpose; the headline "${request.textOverlay}" is set afterwards in code. textExact is true when the image contains no text at all; readableSmall is true when the headline area stays calm and empty.`
+      : `The headline must read exactly: "${request.textOverlay}".`,
     ...(request.idea ? [`The planned idea: ${request.idea}`] : []),
     "Answer the JSON fields:",
     request.withPerson

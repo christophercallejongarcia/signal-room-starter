@@ -53,7 +53,7 @@ export class ThumbnailRunError extends Error {
 }
 
 export type BridgeReference = { id: string; title: string; channelTitle: string; factor: number; views: number; source?: "manual"; note?: string; path: string };
-export type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[]; rules?: string; direction?: string };
+export type BridgeInput = { video: { title: string; brief?: string }; references: BridgeReference[]; faces: FaceReference[]; rules?: string; direction?: string; textByCode?: boolean };
 
 /** Chris' thumbnail playbook, short form, sent to the planner as binding rules. */
 export const THUMBNAIL_RULES_MAX = 8_000;

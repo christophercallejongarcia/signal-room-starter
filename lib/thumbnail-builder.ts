@@ -199,6 +199,8 @@ export type ThumbnailRun = {
   /** The picture idea the run was given, if any. */
   direction?: string;
   aspectRatio: "16:9";
+  /** "code": the drafts stay free of text, the headline is set afterwards with a real font. */
+  textMode?: "code";
   createdAt: string;
   referenceIds: string[];
   faceCount: number;

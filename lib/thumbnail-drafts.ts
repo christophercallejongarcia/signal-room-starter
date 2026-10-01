@@ -99,6 +99,8 @@ export async function runThumbnailDrafts(body: unknown, deps: DraftDeps = {}): P
   // Optional: the recipes to fill the slots with, e.g. the formats picked for one title.
   const requested = (body as { recipes?: unknown } | null)?.recipes;
   const recipes = Array.isArray(requested) ? requested.filter((id): id is string => typeof id === "string" && DRAFT_RECIPE_ORDER.includes(id)) : [];
+  // Optional: the image stays free of text, the headline is set afterwards in code (scripts/thumbnail-text.mjs).
+  const textByCode = (body as { textMode?: unknown } | null)?.textMode === "code";
   const now = deps.now ?? (() => new Date());
   const bridge = deps.bridge ?? callBridge;
   const dir = deps.dir;
@@ -119,6 +121,7 @@ export async function runThumbnailDrafts(body: unknown, deps: DraftDeps = {}): P
     faces,
     ...(rules ? { rules: rules.text } : {}),
     ...(request.direction ? { direction: request.direction } : {}),
+    ...(textByCode ? { textByCode: true } : {}),
   };
 
   // One planning call for 20 variants outlasts the Bridge's window; chunks of five plan in parallel, each with its own recipes.
@@ -143,6 +146,7 @@ export async function runThumbnailDrafts(body: unknown, deps: DraftDeps = {}): P
     briefExcerpt: request.brief.slice(0, 280),
     ...(request.direction ? { direction: request.direction } : {}),
     aspectRatio: "16:9",
+    ...(textByCode ? { textMode: "code" as const } : {}),
     createdAt: started.toISOString(),
     referenceIds: ready.map((reference) => reference.id),
     faceCount: faces.length,
@@ -197,6 +201,7 @@ async function renderDraft(runId: string, variantId: string, input: BridgeInput,
         ...(withPerson ? { faces: input.faces.slice(0, 3) } : {}),
         withPerson,
         textOverlay: variant.textOverlay,
+        ...(input.textByCode ? { textByCode: true } : {}),
         idea: variant.concept,
         ...(rules ? { rules } : {}),
       });
@@ -250,7 +255,7 @@ export async function rerenderThumbnailDraft(body: unknown, deps: DraftDeps = {}
     await store.saveRun(next, { dir });
     return next;
   });
-  const rendering = renderDraft(runId, variantId, { video: { title: run.title }, references: ready, faces }, deps, rules?.text);
+  const rendering = renderDraft(runId, variantId, { video: { title: run.title }, references: ready, faces, ...(run.textMode === "code" ? { textByCode: true } : {}) }, deps, rules?.text);
   if (deps.inline) {
     await rendering;
     return readRunOrFail(runId, dir);

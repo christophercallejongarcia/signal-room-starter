@@ -290,6 +290,10 @@ test("a draft run asks for many variants with a recipe each and renders one fini
   assert.match(render.prompt.recipe.spec, /20 €/);
   assert.equal(render.images.length, 3, "two face photos plus the inspiring thumbnail");
   assert.ok(render.refine);
+  const coded = buildThumbnailImageInput({ ...request(), textByCode: true }, person, "draft");
+  assert.equal(coded.prompt.text.content, undefined, "text set in code: the image model gets no headline");
+  assert.ok(coded.prompt.avoid.includes("any text, letters, numbers or words, also on objects"));
+  assert.match(buildCheckInput(validateCheckRequest({ image: "/tmp/x.png", textOverlay: "Wo stehst du?", textByCode: true }))[0].text, /WITHOUT text/);
   const [faceless] = normalizeThumbnailPlan({ variants: Array.from({ length: 20 }, () => withRecipe("logo-equation", "no-person")) }, drafts);
   const facelessRender = buildThumbnailImageInput(request(), faceless, "draft");
   assert.equal(facelessRender.prompt.person, "No person, no face, no hands.");
