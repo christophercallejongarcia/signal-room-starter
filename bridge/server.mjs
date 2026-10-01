@@ -25,6 +25,7 @@ import {
   validateThumbnailRequest,
   validateThumbnailStage,
 } from "./thumbnails.mjs";
+import { buildTitlesPrompt, titlesOutputSchema, validateTitlesRequest } from "./titles.mjs";
 import { buildPatternDiscoveryPrompt, patternEvaluationOutputSchema, patternHypothesisOutputSchema, validatePatternDiscoveryRequest } from "./pattern-discovery.mjs";
 import {
   briefingOutputSchema,
@@ -209,6 +210,18 @@ const routes = new Map([
         // The answer schema is built from the validated count, so a run comes back with exactly that many.
         const request = validateHooksRequest(input);
         return runCodex(buildHooksPrompt(request), hooksOutputSchema(request.count));
+      },
+    },
+  ],
+  [
+    "/v1/titles",
+    {
+      label: "Titles",
+      failure: "The local Codex title run failed.",
+      run: (input) => {
+        // Exactly count titles, each citing Outlier by position in the packet the bridge accepted.
+        const request = validateTitlesRequest(input);
+        return runCodex(buildTitlesPrompt(request), titlesOutputSchema(request.count, request.outliers.length, request.ideas.length));
       },
     },
   ],
